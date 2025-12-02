@@ -26,73 +26,65 @@ class DatabaseManager:
         """
         sql_setup = """
         -- Tabela de Pools Monitoradas
-        CREATE TABLE IF NOT EXISTS emity_pools (
+        CREATE TABLE IF NOT EXISTS pools (
             id SERIAL PRIMARY KEY,
-            pool_address VARCHAR(255) UNIQUE NOT NULL,
-            dex VARCHAR(100) NOT NULL,
-            chain VARCHAR(100) NOT NULL,
+            address VARCHAR(255) UNIQUE NOT NULL,
             token0_symbol VARCHAR(50),
             token0_address VARCHAR(255),
             token1_symbol VARCHAR(50),
             token1_address VARCHAR(255),
-            tvl_usd DECIMAL(20, 2),
-            volume_24h_usd DECIMAL(20, 2),
             fee_tier DECIMAL(10, 4),
-            apr_7d DECIMAL(10, 2),
-            apr_30d DECIMAL(10, 2),
+            tvl_usd DECIMAL(20, 2),
+            volume_24h DECIMAL(20, 2),
+            fees_24h DECIMAL(20, 2),
+            current_tick INTEGER,
+            current_price DECIMAL(20, 8),
+            price_change_24h DECIMAL(10, 2),
+            fee_apr DECIMAL(10, 2),
+            volatility DECIMAL(10, 2),
             il_7d DECIMAL(10, 2),
             il_30d DECIMAL(10, 2),
-            score_institutional DECIMAL(5, 2),
-            score_explanation TEXT,
-            status VARCHAR(50) DEFAULT 'active',
-            last_update TIMESTAMP DEFAULT NOW(),
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-
-        -- Tabela de Ranges Recomendados
-        CREATE TABLE IF NOT EXISTS emity_ranges (
-            id SERIAL PRIMARY KEY,
-            pool_address VARCHAR(255) REFERENCES emity_pools(pool_address),
-            range_type VARCHAR(50), -- 'defensive', 'optimized', 'aggressive'
-            lower_price DECIMAL(20, 8),
-            upper_price DECIMAL(20, 8),
-            expected_apr DECIMAL(10, 2),
-            expected_il DECIMAL(10, 2),
-            time_in_range_pct DECIMAL(5, 2),
-            capital_efficiency DECIMAL(10, 2),
+            score INTEGER DEFAULT 0,
+            recommendation TEXT,
+            explanation TEXT,
+            ranges_data JSONB,
+            simulations_data JSONB,
+            last_updated TIMESTAMP DEFAULT NOW(),
+            last_analyzed TIMESTAMP,
             created_at TIMESTAMP DEFAULT NOW()
         );
 
         -- Tabela de Posições do Usuário
-        CREATE TABLE IF NOT EXISTS emity_positions (
+        CREATE TABLE IF NOT EXISTS positions (
             id SERIAL PRIMARY KEY,
-            pool_address VARCHAR(255) REFERENCES emity_pools(pool_address),
-            position_type VARCHAR(50), -- 'active', 'pending', 'closed'
+            pool_address VARCHAR(255),
+            pair_name VARCHAR(100),
             capital_usd DECIMAL(20, 2),
-            range_lower DECIMAL(20, 8),
-            range_upper DECIMAL(20, 8),
-            entry_date TIMESTAMP,
+            range_min DECIMAL(20, 8),
+            range_max DECIMAL(20, 8),
+            entry_date TIMESTAMP DEFAULT NOW(),
             exit_date TIMESTAMP,
+            status VARCHAR(50) DEFAULT 'active',
             pnl_usd DECIMAL(20, 2),
-            fees_earned_usd DECIMAL(20, 2),
-            il_realized_usd DECIMAL(20, 2),
-            gas_spent_usd DECIMAL(10, 2),
+            fees_earned DECIMAL(20, 2),
+            il_realized DECIMAL(20, 2),
+            gas_spent DECIMAL(10, 2),
             created_at TIMESTAMP DEFAULT NOW()
         );
 
         -- Tabela de Alertas
-        CREATE TABLE IF NOT EXISTS emity_alerts (
+        CREATE TABLE IF NOT EXISTS alerts (
             id SERIAL PRIMARY KEY,
-            alert_type VARCHAR(50), -- 'opportunity', 'risk', 'maintenance', 'position'
+            alert_type VARCHAR(50),
             pool_address VARCHAR(255),
             message TEXT,
-            severity VARCHAR(20), -- 'low', 'medium', 'high', 'critical'
+            severity VARCHAR(20),
             sent_telegram BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        -- Tabela de Configurações do Usuário
-        CREATE TABLE IF NOT EXISTS emity_config (
+        -- Tabela de Configurações
+        CREATE TABLE IF NOT EXISTS config (
             id SERIAL PRIMARY KEY,
             config_key VARCHAR(100) UNIQUE NOT NULL,
             config_value TEXT,
@@ -100,11 +92,11 @@ class DatabaseManager:
         );
 
         -- Índices para performance
-        CREATE INDEX idx_pools_score ON emity_pools(score_institutional DESC);
-        CREATE INDEX idx_pools_tvl ON emity_pools(tvl_usd DESC);
-        CREATE INDEX idx_pools_volume ON emity_pools(volume_24h_usd DESC);
-        CREATE INDEX idx_positions_status ON emity_positions(position_type);
-        CREATE INDEX idx_alerts_created ON emity_alerts(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_pools_score ON pools(score DESC);
+        CREATE INDEX IF NOT EXISTS idx_pools_tvl ON pools(tvl_usd DESC);
+        CREATE INDEX IF NOT EXISTS idx_pools_volume ON pools(volume_24h DESC);
+        CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+        CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
         """
         
         return sql_setup
@@ -112,7 +104,7 @@ class DatabaseManager:
     async def get_all_pools(self) -> List[Dict]:
         """Retorna todas as pools ativas"""
         try:
-            response = self.supabase.table('emity_pools').select("*").eq('status', 'active').execute()
+            response = self.supabase.table('pools').select("*").execute()
             return response.data
         except Exception as e:
             print(f"Erro ao buscar pools: {e}")
@@ -121,8 +113,8 @@ class DatabaseManager:
     async def upsert_pool(self, pool_data: Dict) -> bool:
         """Insere ou atualiza uma pool"""
         try:
-            pool_data['last_update'] = datetime.now().isoformat()
-            response = self.supabase.table('emity_pools').upsert(pool_data).execute()
+            pool_data['last_updated'] = datetime.now().isoformat()
+            response = self.supabase.table('pools').upsert(pool_data).execute()
             return True
         except Exception as e:
             print(f"Erro ao upsert pool: {e}")
@@ -138,7 +130,7 @@ class DatabaseManager:
                 'severity': severity,
                 'created_at': datetime.now().isoformat()
             }
-            response = self.supabase.table('emity_alerts').insert(alert_data).execute()
+            response = self.supabase.table('alerts').insert(alert_data).execute()
             return True
         except Exception as e:
             print(f"Erro ao salvar alerta: {e}")
@@ -147,7 +139,7 @@ class DatabaseManager:
     async def get_config(self, key: str) -> Optional[str]:
         """Busca uma configuração"""
         try:
-            response = self.supabase.table('emity_config').select("config_value").eq('config_key', key).execute()
+            response = self.supabase.table('config').select("config_value").eq('config_key', key).execute()
             if response.data:
                 return response.data[0]['config_value']
             return None
@@ -163,7 +155,7 @@ class DatabaseManager:
                 'config_value': value,
                 'updated_at': datetime.now().isoformat()
             }
-            response = self.supabase.table('emity_config').upsert(config_data).execute()
+            response = self.supabase.table('config').upsert(config_data).execute()
             return True
         except Exception as e:
             print(f"Erro ao salvar config: {e}")
@@ -171,3 +163,13 @@ class DatabaseManager:
 
 # Instância global
 db = DatabaseManager()
+
+def get_supabase_client() -> Client:
+    """
+    Função para obter o cliente Supabase
+    Usada pelo scanner e analyzer
+    """
+    return create_client(
+        os.getenv("SUPABASE_URL"),
+        os.getenv("SUPABASE_KEY")
+    )
