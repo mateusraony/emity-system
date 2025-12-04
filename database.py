@@ -28,15 +28,21 @@ class EMITYDatabase:
     def upsert_pool(self, pool_data: Dict) -> bool:
         """Insere ou atualiza uma pool"""
         try:
-            # Garantir que temos os campos obrigatórios
-            if not pool_data.get('pool_address'):
-                logger.error("pool_address é obrigatório")
+            # Garantir que temos o identificador principal
+            address = pool_data.get('pool_address') or pool_data.get('address')
+            if not address:
+                logger.error("pool_address/address é obrigatório")
                 return False
+
+            # Manter compatibilidade: gravar sempre address e, se existir, pool_address
+            pool_data['address'] = address
+            if 'pool_address' not in pool_data:
+                pool_data['pool_address'] = address
             
-            # Converter None para valores padrão
+            # Converter None para valores padrão simples
             pool_data = {k: (v if v is not None else 0) for k, v in pool_data.items()}
             
-            result = self.client.table('pools').upsert(pool_data).execute()
+            self.client.table('pools').upsert(pool_data).execute()
             return True
         except Exception as e:
             logger.error(f"Erro ao upsert pool: {e}")
@@ -59,6 +65,12 @@ class EMITYDatabase:
     def get_pool_by_address(self, pool_address: str) -> Optional[Dict]:
         """Busca uma pool específica"""
         try:
+            # Primeiro tenta pela coluna address (padrão atual)
+            result = self.client.table('pools').select('*').eq('address', pool_address).execute()
+            if result.data:
+                return result.data[0]
+            
+            # Fallback para schemas antigos usando pool_address
             result = self.client.table('pools').select('*').eq('pool_address', pool_address).execute()
             return result.data[0] if result.data else None
         except Exception as e:
@@ -72,7 +84,7 @@ class EMITYDatabase:
             # Converter None para valores padrão
             analysis_data = {k: (v if v is not None else 0) for k, v in analysis_data.items()}
             
-            result = self.client.table('analyses').insert(analysis_data).execute()
+            self.client.table('analyses').insert(analysis_data).execute()
             return True
         except Exception as e:
             logger.error(f"Erro ao salvar análise: {e}")
@@ -81,7 +93,15 @@ class EMITYDatabase:
     def get_latest_analysis(self, pool_address: str) -> Optional[Dict]:
         """Busca última análise de uma pool"""
         try:
-            result = self.client.table('analyses').select('*').eq('pool_address', pool_address).order('analyzed_at', desc=True).limit(1).execute()
+            result = (
+                self.client
+                .table('analyses')
+                .select('*')
+                .eq('pool_address', pool_address)
+                .order('analyzed_at', desc=True)
+                .limit(1)
+                .execute()
+            )
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Erro ao buscar análise: {e}")
@@ -91,7 +111,14 @@ class EMITYDatabase:
     def get_user_config(self) -> Optional[Dict]:
         """Busca configuração atual do usuário"""
         try:
-            result = self.client.table('user_config').select('*').order('updated_at', desc=True).limit(1).execute()
+            result = (
+                self.client
+                .table('user_config')
+                .select('*')
+                .order('updated_at', desc=True)
+                .limit(1)
+                .execute()
+            )
             if result.data:
                 config = result.data[0]
                 # Converter strings para números onde necessário
@@ -138,11 +165,11 @@ class EMITYDatabase:
             current = self.get_user_config()
             if not current or not current.get('id'):
                 # Se não existe, criar nova
-                result = self.client.table('user_config').insert(config_updates).execute()
+                self.client.table('user_config').insert(config_updates).execute()
             else:
                 # Atualizar existente
                 config_updates['updated_at'] = datetime.utcnow().isoformat()
-                result = self.client.table('user_config').update(config_updates).eq('id', current['id']).execute()
+                self.client.table('user_config').update(config_updates).eq('id', current['id']).execute()
             
             # Salvar no histórico se houver mudanças significativas
             if current:
@@ -177,7 +204,14 @@ class EMITYDatabase:
     def get_config_history(self, limit: int = 50) -> List[Dict]:
         """Busca histórico de mudanças na configuração"""
         try:
-            result = self.client.table('config_history').select('*').order('changed_at', desc=True).limit(limit).execute()
+            result = (
+                self.client
+                .table('config_history')
+                .select('*')
+                .order('changed_at', desc=True)
+                .limit(limit)
+                .execute()
+            )
             return result.data if result.data else []
         except Exception as e:
             logger.error(f"Erro ao buscar histórico: {e}")
@@ -185,20 +219,27 @@ class EMITYDatabase:
     
     # ============= POSIÇÕES ATIVAS (Fase 2 - NOVO) =============
     def get_active_positions(self) -> List[Dict]:
-        """Busca posições ativas do usuário"""
+        """Busca posições ativas do usuário (simuladas por enquanto)"""
         try:
             # Por enquanto, vamos considerar as top pools como "posições ativas" simuladas
-            # Em produção real, isso viria de uma tabela de posições reais
             pools = self.get_pools(min_score=70, limit=3)
             
-            # Simular posições ativas
             positions = []
-            capital_per_position = 10000  # Exemplo
+            capital_per_position = 10000  # Exemplo fixo por enquanto
             
             for pool in pools[:3]:  # Máximo 3 posições
+                pool_address = pool.get('pool_address') or pool.get('address')
+                
+                # Fallback simples para o par, se não existir 'pair'
+                pair = pool.get('pair')
+                if not pair:
+                    t0 = pool.get('token0_symbol', 'TOKEN0')
+                    t1 = pool.get('token1_symbol', 'TOKEN1')
+                    pair = f"{t0}/{t1}"
+                
                 positions.append({
-                    'pool_address': pool.get('pool_address'),
-                    'pair': pool.get('pair', 'N/A'),
+                    'pool_address': pool_address,
+                    'pair': pair,
                     'capital_invested': capital_per_position,
                     'current_value': capital_per_position * 1.05,  # Simular 5% de lucro
                     'pnl': capital_per_position * 0.05,
@@ -217,11 +258,11 @@ class EMITYDatabase:
     def save_alert(self, alert_data: Dict) -> bool:
         """Salva um alerta gerado pelo sistema"""
         try:
-            result = self.client.table('alerts').insert(alert_data).execute()
+            self.client.table('alerts').insert(alert_data).execute()
             return True
         except Exception as e:
             logger.error(f"Erro ao salvar alerta: {e}")
-            # Se a tabela não existe, criar
+            # Tentativa simplificada de fallback
             try:
                 self.client.table('alerts').insert({
                     'type': alert_data.get('type', 'info'),
@@ -232,13 +273,20 @@ class EMITYDatabase:
                     'created_at': datetime.utcnow().isoformat()
                 }).execute()
                 return True
-            except:
+            except Exception:
                 return False
     
     def get_recent_alerts(self, limit: int = 20) -> List[Dict]:
         """Busca alertas recentes"""
         try:
-            result = self.client.table('alerts').select('*').order('created_at', desc=True).limit(limit).execute()
+            result = (
+                self.client
+                .table('alerts')
+                .select('*')
+                .order('created_at', desc=True)
+                .limit(limit)
+                .execute()
+            )
             return result.data if result.data else []
         except Exception as e:
             logger.error(f"Erro ao buscar alertas: {e}")
