@@ -13,6 +13,18 @@ from decimal import Decimal
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def to_float(value, default: float = 0.0) -> float:
+    """
+    Converte valores variados para float de forma segura.
+    Evita erros quando o valor é None, string vazia ou inválido.
+    """
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 class PoolAnalyzer:
     """Analisador avançado de pools com geração de ranges"""
     
@@ -79,8 +91,8 @@ class PoolAnalyzer:
     
     def _generate_ranges(self, pool: Dict) -> Dict:
         """Gera 3 ranges otimizados baseados no preço atual"""
-        current_price = float(pool.get('current_price', 1))
-        volatility = float(pool.get('volatility', 10))
+        current_price = to_float(pool.get('current_price'), 1.0)
+        volatility = to_float(pool.get('volatility'), 10.0)
         
         # Ajustar ranges baseado na volatilidade
         volatility_factor = 1 + (volatility / 100)
@@ -122,21 +134,24 @@ class PoolAnalyzer:
     def _calculate_period_returns(self, pool: Dict, range_data: Dict, days: int) -> Dict:
         """Calcula retornos para um período específico"""
         # Dados base
-        fee_tier = float(pool.get('fee_tier', 0.3))
-        daily_volume = float(pool.get('volume_24h', 0))
-        tvl = float(pool.get('tvl_usd', 1))
-        volatility = float(pool.get('volatility', 10))
+        fee_tier = to_float(pool.get('fee_tier'), 0.3)
+        daily_volume = to_float(pool.get('volume_24h'), 0.0)
+        tvl = to_float(pool.get('tvl_usd'), 1.0)
+        volatility = to_float(pool.get('volatility'), 10.0)
         
         # Estimar tempo em range baseado na volatilidade e spread
         spread = range_data['spread_percent']
         time_in_range_prob = self._estimate_time_in_range(volatility, spread)
         
         # Calcular fees coletadas
+        if tvl <= 0:
+            tvl = 1.0  # proteção extra contra divisão por zero
         daily_fee_rate = (daily_volume * fee_tier / 100) / tvl
         total_fees = daily_fee_rate * days * time_in_range_prob * 100  # em %
         
         # Calcular IL estimada
-        il_daily = float(pool.get('il_7d', 0)) / 7
+        il_7d_val = to_float(pool.get('il_7d'), 0.0)
+        il_daily = il_7d_val / 7
         total_il = il_daily * days * time_in_range_prob
         
         # Retorno líquido
@@ -158,10 +173,10 @@ class PoolAnalyzer:
         """Estima probabilidade de ficar em range"""
         # Fórmula simplificada baseada em volatilidade vs spread
         if spread <= 0:
-            return 0
+            return 0.0
         
         # Quanto maior o spread em relação à volatilidade, mais tempo em range
-        ratio = spread / max(volatility, 1)
+        ratio = spread / max(volatility, 1.0)
         
         if ratio > 3:
             return 0.95
@@ -181,7 +196,7 @@ class PoolAnalyzer:
         scores = {}
         
         # Score de TVL (0-100)
-        tvl = float(pool.get('tvl_usd', 0))
+        tvl = to_float(pool.get('tvl_usd'), 0.0)
         if tvl > 5000000:
             scores['tvl'] = 100
         elif tvl > 1000000:
@@ -194,7 +209,7 @@ class PoolAnalyzer:
             scores['tvl'] = 20
         
         # Score de Volume (0-100)
-        volume = float(pool.get('volume_24h', 0))
+        volume = to_float(pool.get('volume_24h'), 0.0)
         if volume > 1000000:
             scores['volume'] = 100
         elif volume > 500000:
@@ -207,7 +222,7 @@ class PoolAnalyzer:
             scores['volume'] = 20
         
         # Score de Fee APR (0-100)
-        fee_apr = float(pool.get('fee_apr', 0))
+        fee_apr = to_float(pool.get('fee_apr'), 0.0)
         if fee_apr > 100:
             scores['fee_apr'] = 100
         elif fee_apr > 50:
@@ -220,7 +235,7 @@ class PoolAnalyzer:
             scores['fee_apr'] = 20
         
         # Score de Risco IL (invertido, 0-100)
-        il_7d = float(pool.get('il_7d', 0))
+        il_7d = to_float(pool.get('il_7d'), 0.0)
         if il_7d < 1:
             scores['il_risk'] = 100
         elif il_7d < 2:
@@ -233,7 +248,7 @@ class PoolAnalyzer:
             scores['il_risk'] = 20
         
         # Score de Volatilidade (invertido, 0-100)
-        volatility = float(pool.get('volatility', 0))
+        volatility = to_float(pool.get('volatility'), 0.0)
         if volatility < 5:
             scores['volatility'] = 100
         elif volatility < 10:
@@ -254,16 +269,16 @@ class PoolAnalyzer:
         scores['time_in_range'] = min(100, best_time_in_range * 1.2)
         
         # Calcular score final ponderado
-        final_score = 0
+        final_score = 0.0
         for metric, weight in self.SCORE_WEIGHTS.items():
             final_score += scores.get(metric, 0) * weight
         
-        final_score = int(final_score)
+        final_score_int = int(final_score)
         
         # Gerar explicação
-        explanation = self._generate_score_explanation(scores, final_score, pool)
+        explanation = self._generate_score_explanation(scores, final_score_int, pool)
         
-        return final_score, explanation
+        return final_score_int, explanation
     
     def _generate_score_explanation(self, scores: Dict, final_score: int, pool: Dict) -> str:
         """Gera explicação em português do score"""
@@ -286,14 +301,21 @@ class PoolAnalyzer:
         explanation = f"{emoji} Pool {token0}/{token1} - Qualidade {quality}\n\n"
         explanation += f"📊 Score Institucional: {final_score}/100\n\n"
         
+        # Valores numéricos seguros para exibição
+        tvl_value = to_float(pool.get('tvl_usd'), 0.0)
+        fee_apr_value = to_float(pool.get('fee_apr'), 0.0)
+        volume_value = to_float(pool.get('volume_24h'), 0.0)
+        volatility_value = to_float(pool.get('volatility'), 0.0)
+        il_7d_value = to_float(pool.get('il_7d'), 0.0)
+        
         # Pontos fortes
         strengths = []
         if scores.get('tvl', 0) >= 60:
-            strengths.append(f"✅ TVL sólida: ${pool.get('tvl_usd', 0):,.0f}")
+            strengths.append(f"✅ TVL sólida: ${tvl_value:,.0f}")
         if scores.get('fee_apr', 0) >= 60:
-            strengths.append(f"✅ APR atrativa: {pool.get('fee_apr', 0):.1f}%")
+            strengths.append(f"✅ APR atrativa: {fee_apr_value:.1f}%")
         if scores.get('volume', 0) >= 60:
-            strengths.append(f"✅ Volume alto: ${pool.get('volume_24h', 0):,.0f}/24h")
+            strengths.append(f"✅ Volume alto: ${volume_value:,.0f}/24h")
         
         if strengths:
             explanation += "Pontos Fortes:\n" + "\n".join(strengths) + "\n\n"
@@ -301,9 +323,9 @@ class PoolAnalyzer:
         # Pontos de atenção
         weaknesses = []
         if scores.get('volatility', 0) < 60:
-            weaknesses.append(f"⚠️ Volatilidade: {pool.get('volatility', 0):.1f}%")
+            weaknesses.append(f"⚠️ Volatilidade: {volatility_value:.1f}%")
         if scores.get('il_risk', 0) < 60:
-            weaknesses.append(f"⚠️ Risco IL: {pool.get('il_7d', 0):.1f}% (7d)")
+            weaknesses.append(f"⚠️ Risco IL: {il_7d_value:.1f}% (7d)")
         
         if weaknesses:
             explanation += "Pontos de Atenção:\n" + "\n".join(weaknesses)
@@ -314,7 +336,7 @@ class PoolAnalyzer:
         """Gera recomendação baseada na análise"""
         # Encontrar melhor estratégia
         best_strategy = None
-        best_return = -999
+        best_return = -999.0
         
         for strategy, sim in simulations.items():
             net_30d = sim['30d']['net_after_gas']
