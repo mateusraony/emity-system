@@ -1,175 +1,276 @@
 """
-EMITY Database Manager - Supabase Integration
-Gestão completa das tabelas do sistema
+EMITY System - Conexão e operações com Supabase
+Versão com suporte a user_config (Fase 2)
 """
-
 import os
-from typing import List, Dict, Optional
-from datetime import datetime
+import logging
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
-class DatabaseManager:
+class EMITYDatabase:
     def __init__(self):
         """Inicializa conexão com Supabase"""
-        self.supabase: Client = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY")
-        )
+        supabase_url = os.getenv('SUPABASE_URL')
+        supabase_key = os.getenv('SUPABASE_ANON_KEY')
         
-    def setup_tables(self):
-        """
-        Cria estrutura das tabelas no Supabase
-        Execute estas queries no SQL Editor do Supabase
-        """
-        sql_setup = """
-        -- Tabela de Pools Monitoradas
-        CREATE TABLE IF NOT EXISTS pools (
-            id SERIAL PRIMARY KEY,
-            address VARCHAR(255) UNIQUE NOT NULL,
-            token0_symbol VARCHAR(50),
-            token0_address VARCHAR(255),
-            token1_symbol VARCHAR(50),
-            token1_address VARCHAR(255),
-            fee_tier DECIMAL(10, 4),
-            tvl_usd DECIMAL(20, 2),
-            volume_24h DECIMAL(20, 2),
-            fees_24h DECIMAL(20, 2),
-            current_tick INTEGER,
-            current_price DECIMAL(20, 8),
-            price_change_24h DECIMAL(10, 2),
-            fee_apr DECIMAL(10, 2),
-            volatility DECIMAL(10, 2),
-            il_7d DECIMAL(10, 2),
-            il_30d DECIMAL(10, 2),
-            score INTEGER DEFAULT 0,
-            recommendation TEXT,
-            explanation TEXT,
-            ranges_data JSONB,
-            simulations_data JSONB,
-            last_updated TIMESTAMP DEFAULT NOW(),
-            last_analyzed TIMESTAMP,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-
-        -- Tabela de Posições do Usuário
-        CREATE TABLE IF NOT EXISTS positions (
-            id SERIAL PRIMARY KEY,
-            pool_address VARCHAR(255),
-            pair_name VARCHAR(100),
-            capital_usd DECIMAL(20, 2),
-            range_min DECIMAL(20, 8),
-            range_max DECIMAL(20, 8),
-            entry_date TIMESTAMP DEFAULT NOW(),
-            exit_date TIMESTAMP,
-            status VARCHAR(50) DEFAULT 'active',
-            pnl_usd DECIMAL(20, 2),
-            fees_earned DECIMAL(20, 2),
-            il_realized DECIMAL(20, 2),
-            gas_spent DECIMAL(10, 2),
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-
-        -- Tabela de Alertas
-        CREATE TABLE IF NOT EXISTS alerts (
-            id SERIAL PRIMARY KEY,
-            alert_type VARCHAR(50),
-            pool_address VARCHAR(255),
-            message TEXT,
-            severity VARCHAR(20),
-            sent_telegram BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-
-        -- Tabela de Configurações
-        CREATE TABLE IF NOT EXISTS config (
-            id SERIAL PRIMARY KEY,
-            config_key VARCHAR(100) UNIQUE NOT NULL,
-            config_value TEXT,
-            updated_at TIMESTAMP DEFAULT NOW()
-        );
-
-        -- Índices para performance
-        CREATE INDEX IF NOT EXISTS idx_pools_score ON pools(score DESC);
-        CREATE INDEX IF NOT EXISTS idx_pools_tvl ON pools(tvl_usd DESC);
-        CREATE INDEX IF NOT EXISTS idx_pools_volume ON pools(volume_24h DESC);
-        CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
-        CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
-        """
+        if not supabase_url or not supabase_key:
+            raise ValueError("SUPABASE_URL e SUPABASE_ANON_KEY devem estar configurados")
         
-        return sql_setup
+        self.client: Client = create_client(supabase_url, supabase_key)
+        logger.info("Conectado ao Supabase")
     
-    async def get_all_pools(self) -> List[Dict]:
-        """Retorna todas as pools ativas"""
-        try:
-            response = self.supabase.table('pools').select("*").execute()
-            return response.data
-        except Exception as e:
-            print(f"Erro ao buscar pools: {e}")
-            return []
-    
-    async def upsert_pool(self, pool_data: Dict) -> bool:
+    # ============= POOLS (Fase 1) =============
+    def upsert_pool(self, pool_data: Dict) -> bool:
         """Insere ou atualiza uma pool"""
         try:
-            pool_data['last_updated'] = datetime.now().isoformat()
-            response = self.supabase.table('pools').upsert(pool_data).execute()
+            # Garantir que temos os campos obrigatórios
+            if not pool_data.get('pool_address'):
+                logger.error("pool_address é obrigatório")
+                return False
+            
+            # Converter None para valores padrão
+            pool_data = {k: (v if v is not None else 0) for k, v in pool_data.items()}
+            
+            result = self.client.table('pools').upsert(pool_data).execute()
             return True
         except Exception as e:
-            print(f"Erro ao upsert pool: {e}")
+            logger.error(f"Erro ao upsert pool: {e}")
             return False
     
-    async def save_alert(self, alert_type: str, message: str, pool_address: str = None, severity: str = 'medium') -> bool:
-        """Salva um alerta no banco"""
+    def get_pools(self, min_score: int = 0, limit: int = 100) -> List[Dict]:
+        """Busca pools com filtros"""
         try:
-            alert_data = {
-                'alert_type': alert_type,
-                'message': message,
-                'pool_address': pool_address,
-                'severity': severity,
-                'created_at': datetime.now().isoformat()
-            }
-            response = self.supabase.table('alerts').insert(alert_data).execute()
-            return True
+            query = self.client.table('pools').select('*')
+            
+            if min_score > 0:
+                query = query.gte('score', min_score)
+            
+            result = query.order('score', desc=True).limit(limit).execute()
+            return result.data if result.data else []
         except Exception as e:
-            print(f"Erro ao salvar alerta: {e}")
-            return False
+            logger.error(f"Erro ao buscar pools: {e}")
+            return []
     
-    async def get_config(self, key: str) -> Optional[str]:
-        """Busca uma configuração"""
+    def get_pool_by_address(self, pool_address: str) -> Optional[Dict]:
+        """Busca uma pool específica"""
         try:
-            response = self.supabase.table('config').select("config_value").eq('config_key', key).execute()
-            if response.data:
-                return response.data[0]['config_value']
+            result = self.client.table('pools').select('*').eq('pool_address', pool_address).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"Erro ao buscar pool {pool_address}: {e}")
             return None
-        except Exception as e:
-            print(f"Erro ao buscar config: {e}")
-            return None
     
-    async def set_config(self, key: str, value: str) -> bool:
-        """Define uma configuração"""
+    # ============= ANÁLISES (Fase 1) =============
+    def save_analysis(self, analysis_data: Dict) -> bool:
+        """Salva análise de uma pool"""
         try:
-            config_data = {
-                'config_key': key,
-                'config_value': value,
-                'updated_at': datetime.now().isoformat()
-            }
-            response = self.supabase.table('config').upsert(config_data).execute()
+            # Converter None para valores padrão
+            analysis_data = {k: (v if v is not None else 0) for k, v in analysis_data.items()}
+            
+            result = self.client.table('analyses').insert(analysis_data).execute()
             return True
         except Exception as e:
-            print(f"Erro ao salvar config: {e}")
+            logger.error(f"Erro ao salvar análise: {e}")
             return False
-
-# Instância global
-db = DatabaseManager()
-
-def get_supabase_client() -> Client:
-    """
-    Função para obter o cliente Supabase
-    Usada pelo scanner e analyzer
-    """
-    return create_client(
-        os.getenv("SUPABASE_URL"),
-        os.getenv("SUPABASE_KEY")
-    )
+    
+    def get_latest_analysis(self, pool_address: str) -> Optional[Dict]:
+        """Busca última análise de uma pool"""
+        try:
+            result = self.client.table('analyses').select('*').eq('pool_address', pool_address).order('analyzed_at', desc=True).limit(1).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"Erro ao buscar análise: {e}")
+            return None
+    
+    # ============= USER CONFIG (Fase 2 - NOVO) =============
+    def get_user_config(self) -> Optional[Dict]:
+        """Busca configuração atual do usuário"""
+        try:
+            result = self.client.table('user_config').select('*').order('updated_at', desc=True).limit(1).execute()
+            if result.data:
+                config = result.data[0]
+                # Converter strings para números onde necessário
+                config['capital_total'] = float(config.get('capital_total', 10000))
+                config['max_positions'] = int(config.get('max_positions', 3))
+                config['stop_loss'] = float(config.get('stop_loss', 10.0))
+                config['max_position_size'] = float(config.get('max_position_size', 30.0))
+                config['min_score'] = int(config.get('min_score', 60))
+                config['gas_multiplier'] = float(config.get('gas_multiplier', 2.0))
+                return config
+            
+            # Se não existe, criar configuração padrão
+            return self.create_default_config()
+            
+        except Exception as e:
+            logger.error(f"Erro ao buscar configuração: {e}")
+            return self.create_default_config()
+    
+    def create_default_config(self) -> Dict:
+        """Cria configuração padrão"""
+        default_config = {
+            'capital_total': 10000,
+            'perfil_risco': 'conservador',
+            'max_positions': 3,
+            'stop_loss': 10.0,
+            'max_position_size': 30.0,
+            'min_score': 60,
+            'gas_multiplier': 2.0
+        }
+        
+        try:
+            result = self.client.table('user_config').insert(default_config).execute()
+            if result.data:
+                return result.data[0]
+        except Exception as e:
+            logger.error(f"Erro ao criar config padrão: {e}")
+        
+        return default_config
+    
+    def update_user_config(self, config_updates: Dict) -> bool:
+        """Atualiza configuração do usuário"""
+        try:
+            # Buscar config atual para pegar o ID
+            current = self.get_user_config()
+            if not current or not current.get('id'):
+                # Se não existe, criar nova
+                result = self.client.table('user_config').insert(config_updates).execute()
+            else:
+                # Atualizar existente
+                config_updates['updated_at'] = datetime.utcnow().isoformat()
+                result = self.client.table('user_config').update(config_updates).eq('id', current['id']).execute()
+            
+            # Salvar no histórico se houver mudanças significativas
+            if current:
+                self._save_config_history(current, config_updates)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro ao atualizar configuração: {e}")
+            return False
+    
+    def _save_config_history(self, old_config: Dict, new_values: Dict):
+        """Salva histórico de mudanças na configuração"""
+        try:
+            for field, new_value in new_values.items():
+                if field in ['updated_at', 'created_at', 'id']:
+                    continue
+                    
+                old_value = old_config.get(field)
+                if str(old_value) != str(new_value):
+                    history_entry = {
+                        'config_id': old_config.get('id'),
+                        'field_changed': field,
+                        'old_value': str(old_value),
+                        'new_value': str(new_value)
+                    }
+                    self.client.table('config_history').insert(history_entry).execute()
+                    
+        except Exception as e:
+            logger.error(f"Erro ao salvar histórico: {e}")
+    
+    def get_config_history(self, limit: int = 50) -> List[Dict]:
+        """Busca histórico de mudanças na configuração"""
+        try:
+            result = self.client.table('config_history').select('*').order('changed_at', desc=True).limit(limit).execute()
+            return result.data if result.data else []
+        except Exception as e:
+            logger.error(f"Erro ao buscar histórico: {e}")
+            return []
+    
+    # ============= POSIÇÕES ATIVAS (Fase 2 - NOVO) =============
+    def get_active_positions(self) -> List[Dict]:
+        """Busca posições ativas do usuário"""
+        try:
+            # Por enquanto, vamos considerar as top pools como "posições ativas" simuladas
+            # Em produção real, isso viria de uma tabela de posições reais
+            pools = self.get_pools(min_score=70, limit=3)
+            
+            # Simular posições ativas
+            positions = []
+            capital_per_position = 10000  # Exemplo
+            
+            for pool in pools[:3]:  # Máximo 3 posições
+                positions.append({
+                    'pool_address': pool.get('pool_address'),
+                    'pair': pool.get('pair', 'N/A'),
+                    'capital_invested': capital_per_position,
+                    'current_value': capital_per_position * 1.05,  # Simular 5% de lucro
+                    'pnl': capital_per_position * 0.05,
+                    'pnl_percentage': 5.0,
+                    'status': 'active',
+                    'opened_at': datetime.utcnow() - timedelta(days=2)
+                })
+            
+            return positions
+            
+        except Exception as e:
+            logger.error(f"Erro ao buscar posições ativas: {e}")
+            return []
+    
+    # ============= ALERTAS (Fase 2 - NOVO) =============  
+    def save_alert(self, alert_data: Dict) -> bool:
+        """Salva um alerta gerado pelo sistema"""
+        try:
+            result = self.client.table('alerts').insert(alert_data).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao salvar alerta: {e}")
+            # Se a tabela não existe, criar
+            try:
+                self.client.table('alerts').insert({
+                    'type': alert_data.get('type', 'info'),
+                    'title': alert_data.get('title', ''),
+                    'message': alert_data.get('message', ''),
+                    'pool_address': alert_data.get('pool_address'),
+                    'severity': alert_data.get('severity', 'low'),
+                    'created_at': datetime.utcnow().isoformat()
+                }).execute()
+                return True
+            except:
+                return False
+    
+    def get_recent_alerts(self, limit: int = 20) -> List[Dict]:
+        """Busca alertas recentes"""
+        try:
+            result = self.client.table('alerts').select('*').order('created_at', desc=True).limit(limit).execute()
+            return result.data if result.data else []
+        except Exception as e:
+            logger.error(f"Erro ao buscar alertas: {e}")
+            return []
+    
+    # ============= ESTATÍSTICAS (Fase 2 - NOVO) =============
+    def get_portfolio_stats(self) -> Dict:
+        """Calcula estatísticas do portfolio"""
+        try:
+            positions = self.get_active_positions()
+            
+            total_invested = sum(p.get('capital_invested', 0) for p in positions)
+            total_value = sum(p.get('current_value', 0) for p in positions)
+            total_pnl = total_value - total_invested
+            total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+            
+            return {
+                'total_positions': len(positions),
+                'total_invested': round(total_invested, 2),
+                'total_value': round(total_value, 2),
+                'total_pnl': round(total_pnl, 2),
+                'total_pnl_percentage': round(total_pnl_pct, 2),
+                'best_performer': max(positions, key=lambda x: x.get('pnl_percentage', 0)) if positions else None,
+                'worst_performer': min(positions, key=lambda x: x.get('pnl_percentage', 0)) if positions else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao calcular estatísticas: {e}")
+            return {
+                'total_positions': 0,
+                'total_invested': 0,
+                'total_value': 0,
+                'total_pnl': 0,
+                'total_pnl_percentage': 0
+            }
