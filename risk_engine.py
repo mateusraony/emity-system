@@ -3,6 +3,7 @@ EMITY System - Motor de Risco e Position Sizing
 Fase 2: Gestão de capital e regras institucionais
 """
 import logging
+import json
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal, ROUND_DOWN
 
@@ -51,6 +52,103 @@ class RiskEngine:
         # Aplicar limites do perfil
         profile = self.RISK_PROFILES.get(self.perfil_risco, self.RISK_PROFILES['conservador'])
         self.profile_limits = profile
+
+    # ------------------------
+    # Helpers internos
+    # ------------------------
+    def _get_pool_address(self, pool: Dict) -> Optional[str]:
+        """Retorna o identificador único da pool, independente do formato."""
+        return pool.get('pool_address') or pool.get('address')
+
+    def _get_pair_label(self, pool: Dict) -> str:
+        """Retorna o par em formato legível."""
+        if pool.get('pair'):
+            return pool['pair']
+        t0 = pool.get('token0_symbol', 'TOKEN0')
+        t1 = pool.get('token1_symbol', 'TOKEN1')
+        return f"{t0}/{t1}"
+
+    def _extract_simulation_7d(self, pool_data: Dict) -> Dict:
+        """
+        Extrai uma visão consolidada de simulação 7d da pool.
+        Aceita:
+        - pool_data['simulation_7d'] já pronto
+        - pool_data['sim_7d']
+        - blob pool_data['simulations'] ou pool_data['simulations_data']
+          no formato gerado pelo analyzer.py (defensive/optimized/aggressive).
+        """
+        # Caso já exista um simulation_7d estruturado, usa direto
+        sim = pool_data.get('simulation_7d')
+        if isinstance(sim, dict):
+            return sim
+
+        sim = pool_data.get('sim_7d')
+        if isinstance(sim, dict):
+            return sim
+
+        # Tentar extrair do blob de simulations
+        sims_blob = pool_data.get('simulations') or pool_data.get('simulations_data')
+        if isinstance(sims_blob, str):
+            try:
+                sims = json.loads(sims_blob)
+            except Exception:
+                sims = None
+        else:
+            sims = sims_blob
+
+        if isinstance(sims, dict):
+            best = None  # (net_after_gas, data_7d)
+            for key in ('defensive', 'optimized', 'aggressive'):
+                strat = sims.get(key)
+                if not isinstance(strat, dict):
+                    continue
+                data_7d = strat.get('7d') or {}
+                if not isinstance(data_7d, dict):
+                    continue
+
+                net_after = data_7d.get('net_after_gas')
+                if net_after is None:
+                    net_after = data_7d.get('net_return')
+
+                try:
+                    net_after_val = float(net_after)
+                except (TypeError, ValueError):
+                    continue
+
+                # Escolher o melhor net_after_gas (já descontando gas)
+                if best is None or net_after_val > best[0]:
+                    best = (net_after_val, data_7d)
+
+            if best is not None:
+                _, data_7d = best
+                # IL em %, campo do analyzer é "impermanent_loss"
+                il = data_7d.get('impermanent_loss', 0)
+                try:
+                    il_val = float(il)
+                except (TypeError, ValueError):
+                    il_val = 0.0
+
+                time_in_range = data_7d.get('time_in_range', 0)
+                try:
+                    time_in_range_val = float(time_in_range)
+                except (TypeError, ValueError):
+                    time_in_range_val = 0.0
+
+                net_ret = data_7d.get('net_return', best[0])
+                try:
+                    net_ret_val = float(net_ret)
+                except (TypeError, ValueError):
+                    net_ret_val = float(best[0])
+
+                return {
+                    'net_return': net_ret_val,          # % estimado (antes de gas)
+                    'net_after_gas': best[0],          # % estimado (após gas)
+                    'time_in_range': time_in_range_val,
+                    'il_percentage': il_val            # % de IL estimada
+                }
+
+        # Sem dados suficientes
+        return {}
     
     def calculate_position_size(self, pool_data: Dict, override_pct: Optional[float] = None) -> Dict:
         """
@@ -99,27 +197,42 @@ class RiskEngine:
     
     def validate_gas_cost(self, position_size: float, pool_data: Dict) -> Dict:
         """Valida se vale a pena pagar o gas para essa posição"""
-        # Estimar retorno esperado (7 dias)
-        estimated_return = pool_data.get('simulation_7d', {}).get('net_return', 0)
+        # Estimar retorno esperado (7 dias) em USD
+        sim_7d = self._extract_simulation_7d(pool_data)
+        estimated_return_usd = 0.0
+
+        if sim_7d:
+            # Valores vindo do analyzer são em %, converter para USD
+            net_pct = sim_7d.get('net_after_gas')
+            if net_pct is None:
+                net_pct = sim_7d.get('net_return', 0)
+            try:
+                net_pct_val = float(net_pct)
+            except (TypeError, ValueError):
+                net_pct_val = 0.0
+            estimated_return_usd = position_size * (net_pct_val / 100.0)
         
         # Se não tem simulação, estimar por APR
-        if not estimated_return and pool_data.get('apr_7d'):
-            apr_7d = pool_data['apr_7d']
-            estimated_return = position_size * (apr_7d / 100) * (7/365)
+        if estimated_return_usd <= 0 and pool_data.get('apr_7d'):
+            try:
+                apr_7d = float(pool_data['apr_7d'])
+                estimated_return_usd = position_size * (apr_7d / 100.0) * (7.0 / 365.0)
+            except (TypeError, ValueError):
+                estimated_return_usd = 0.0
         
         warnings = []
         
         # Regra 1: Retorno deve ser pelo menos 2x o gas
         min_return_needed = self.GAS_COST_USD * self.gas_multiplier
-        if estimated_return < min_return_needed:
+        if estimated_return_usd < min_return_needed:
             return {
                 'viable': False,
-                'reason': f'Retorno estimado ${estimated_return:.2f} < ${min_return_needed:.2f} (gas x{self.gas_multiplier})',
+                'reason': f'Retorno estimado ${estimated_return_usd:.2f} < ${min_return_needed:.2f} (gas x{self.gas_multiplier})',
                 'warnings': []
             }
         
         # Regra 2: Avisar se gas > 10% do retorno
-        gas_pct = (self.GAS_COST_USD / estimated_return) * 100 if estimated_return > 0 else 100
+        gas_pct = (self.GAS_COST_USD / estimated_return_usd) * 100 if estimated_return_usd > 0 else 100
         if gas_pct > self.GAS_WARNING_THRESHOLD * 100:
             warnings.append(f'⚠️ Gas representa {gas_pct:.1f}% do retorno esperado')
         
@@ -149,18 +262,27 @@ class RiskEngine:
         
         for pool in pools:
             score = pool.get('score', 0)
-            sim_7d = pool.get('simulation_7d', {})
+            sim_7d = self._extract_simulation_7d(pool)
             
             # Verificar critérios mínimos
-            if score >= self.min_score:
-                il_pct = abs(sim_7d.get('il_percentage', 0))
-                net_return = sim_7d.get('net_return', 0)
+            if score >= self.min_score and sim_7d:
+                il_raw = sim_7d.get('il_percentage', sim_7d.get('impermanent_loss', 0))
+                try:
+                    il_pct = abs(float(il_raw))
+                except (TypeError, ValueError):
+                    il_pct = 0.0
+
+                net_raw = sim_7d.get('net_after_gas', sim_7d.get('net_return', 0))
+                try:
+                    net_return = float(net_raw)
+                except (TypeError, ValueError):
+                    net_return = 0.0
                 
-                # IL não pode ser maior que o retorno
+                # IL não pode ser maior que o retorno e retorno deve ser positivo
                 if il_pct <= self.profile_limits['max_il_tolerance'] and net_return > 0:
                     good_pools.append({
-                        'pool_address': pool.get('pool_address'),
-                        'pair': pool.get('pair', 'N/A'),
+                        'pool_address': self._get_pool_address(pool),
+                        'pair': self._get_pair_label(pool),
                         'score': score,
                         'net_return': net_return,
                         'il_percentage': il_pct
@@ -218,7 +340,10 @@ class RiskEngine:
         
         for pool in market_check['good_pools']:
             # Buscar dados completos da pool
-            full_pool = next((p for p in pools if p.get('pool_address') == pool['pool_address']), pool)
+            full_pool = next(
+                (p for p in pools if self._get_pool_address(p) == pool['pool_address']),
+                pool
+            )
             
             # Calcular tamanho da posição
             position = self.calculate_position_size(full_pool)
