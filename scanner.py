@@ -23,7 +23,8 @@ class UniswapV3Scanner:
         self.supabase = supabase_client
         
         # URLs das APIs
-        self.graph_url = "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-arbitrum"
+        # Endpoint atualizado do Uniswap v3 Arbitrum (The Graph)
+        self.graph_url = "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-arbitrum-one"
         self.gecko_terminal = "https://api.geckoterminal.com/api/v2/networks/arbitrum/dexes/uniswap_v3/pools"
         self.dexscreener_base = "https://api.dexscreener.com/latest/dex"
         
@@ -141,7 +142,10 @@ class UniswapV3Scanner:
                 if self._is_institutional_pool(pool):
                     analyzed_pool = self._analyze_pool(pool)
                     filtered_pools.append(analyzed_pool)
-                    logger.info(f"✅ {pool['token0_symbol']}/{pool['token1_symbol']} - TVL: ${pool['tvl_usd']:,.0f} - Score: {analyzed_pool['score']}")
+                    logger.info(
+                        f"✅ {pool['token0_symbol']}/{pool['token1_symbol']} - "
+                        f"TVL: ${pool['tvl_usd']:,.0f} - Score: {analyzed_pool['score']}"
+                    )
             
             # 6. Salvar no banco
             await self._save_to_database(filtered_pools)
@@ -187,18 +191,26 @@ class UniswapV3Scanner:
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    pools = []
+                    pools: List[Dict] = []
                     
                     if data and 'data' in data and 'pools' in data['data']:
                         for pool in data['data']['pools']:
+                            day_data = pool.get('poolDayData') or []
+                            if isinstance(day_data, list) and len(day_data) > 0:
+                                volume_24h = float(day_data[0].get('volumeUSD', 0) or 0)
+                                fees_24h = float(day_data[0].get('feesUSD', 0) or 0)
+                            else:
+                                volume_24h = 0.0
+                                fees_24h = 0.0
+                            
                             pools.append({
                                 'address': pool['id'].lower(),
                                 'token0_symbol': pool['token0']['symbol'],
                                 'token1_symbol': pool['token1']['symbol'],
                                 'fee_tier': int(pool['feeTier']) / 10000,
-                                'tvl_usd': float(pool.get('totalValueLockedUSD', 0)),
-                                'volume_24h': float(pool['poolDayData'][0]['volumeUSD']) if pool.get('poolDayData') else 0,
-                                'fees_24h': float(pool['poolDayData'][0]['feesUSD']) if pool.get('poolDayData') else 0,
+                                'tvl_usd': float(pool.get('totalValueLockedUSD', 0) or 0),
+                                'volume_24h': volume_24h,
+                                'fees_24h': fees_24h,
                                 'current_price': 0,
                                 'price_change_24h': 0
                             })
@@ -216,21 +228,24 @@ class UniswapV3Scanner:
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    pools = []
+                    pools: List[Dict] = []
                     
                     if 'data' in data:
                         for pool_data in data['data'][:15]:
                             attributes = pool_data.get('attributes', {})
+                            volume_usd = attributes.get('volume_usd', {}) or {}
+                            price_change_pct = attributes.get('price_change_percentage', {}) or {}
+                            
                             pools.append({
                                 'address': pool_data.get('id', '').lower(),
                                 'token0_symbol': attributes.get('base_token_symbol', ''),
                                 'token1_symbol': attributes.get('quote_token_symbol', ''),
                                 'fee_tier': 0.3,
-                                'tvl_usd': float(attributes.get('reserve_in_usd', 0)),
-                                'volume_24h': float(attributes.get('volume_usd', {}).get('h24', 0)),
-                                'fees_24h': float(attributes.get('volume_usd', {}).get('h24', 0)) * 0.003,
-                                'current_price': float(attributes.get('base_token_price_usd', 0)),
-                                'price_change_24h': float(attributes.get('price_change_percentage', {}).get('h24', 0))
+                                'tvl_usd': float(attributes.get('reserve_in_usd', 0) or 0),
+                                'volume_24h': float(volume_usd.get('h24', 0) or 0),
+                                'fees_24h': float(volume_usd.get('h24', 0) or 0) * 0.003,
+                                'current_price': float(attributes.get('base_token_price_usd', 0) or 0),
+                                'price_change_24h': float(price_change_pct.get('h24', 0) or 0)
                             })
                     
                     return pools
@@ -247,21 +262,24 @@ class UniswapV3Scanner:
                     data = await response.json()
                     pairs = data.get('pairs', [])
                     
-                    pools = []
+                    pools: List[Dict] = []
                     for pair in pairs:
                         if pair.get('chainId') == 'arbitrum' and 'uniswap' in pair.get('dexId', '').lower():
-                            liquidity = pair.get('liquidity', {}).get('usd', 0)
+                            liquidity = pair.get('liquidity', {}).get('usd', 0) or 0
                             if liquidity >= self.MIN_TVL:
+                                volume_obj = pair.get('volume', {}) or {}
+                                price_change_obj = pair.get('priceChange', {}) or {}
+                                
                                 pools.append({
                                     'address': pair.get('pairAddress', '').lower(),
                                     'token0_symbol': pair.get('baseToken', {}).get('symbol', ''),
                                     'token1_symbol': pair.get('quoteToken', {}).get('symbol', ''),
                                     'fee_tier': 0.3,
                                     'tvl_usd': liquidity,
-                                    'volume_24h': pair.get('volume', {}).get('h24', 0),
-                                    'fees_24h': pair.get('volume', {}).get('h24', 0) * 0.003,
-                                    'current_price': float(pair.get('priceUsd', 0)),
-                                    'price_change_24h': pair.get('priceChange', {}).get('h24', 0)
+                                    'volume_24h': volume_obj.get('h24', 0) or 0,
+                                    'fees_24h': (volume_obj.get('h24', 0) or 0) * 0.003,
+                                    'current_price': float(pair.get('priceUsd', 0) or 0),
+                                    'price_change_24h': price_change_obj.get('h24', 0) or 0
                                 })
                     
                     return pools[:10]
@@ -272,7 +290,7 @@ class UniswapV3Scanner:
     
     async def _fetch_known_pools_fallback(self) -> List[Dict]:
         """Fallback com pools conhecidas"""
-        pools = []
+        pools: List[Dict] = []
         
         for pool_data in self.KNOWN_POOLS[:15]:
             tokens = pool_data['pair'].split('/')
