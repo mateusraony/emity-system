@@ -1,44 +1,77 @@
-"""
-EMITY System - API Principal
-Liquidity Pool Intelligence System
+"""EMITY System - API Principal
+Fase 2: Liquidity Pool Intelligence + Motor de Risco
+Combinação dos módulos da Fase 1 (scanner/análises) com Fase 2 (risk engine/config)
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import os
+import json
+import asyncio
+import logging
+from datetime import datetime
+from typing import Optional, List, Dict
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.requests import Request
-from pydantic import BaseModel
-from typing import Optional, List, Dict
-import os
-from datetime import datetime, timedelta
-import asyncio
-import json
-import logging
+from pydantic import BaseModel, Field
 
-# Import local modules
-from database import get_supabase_client
+from database import EMITYDatabase
 from scanner import run_scanner, add_custom_pool
 from analyzer import analyze_all_pools, PoolAnalyzer
+from risk_engine import RiskEngine
 
-# Configuração de logging
-logging.basicConfig(level=logging.INFO)
+# ============================================================
+# Logging
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
-# Inicializar FastAPI
+# ============================================================
+# App / CORS / Templates
+# ============================================================
+
 app = FastAPI(
-    title="EMITY System",
-    description="Liquidity Pool Intelligence - Sistema de Análise Institucional",
-    version="1.0.0"
+    title="EMITY System - Liquidity Pool Intelligence",
+    description="Sistema institucional de análise de pools + motor de risco",
+    version="2.0.0",
 )
 
-# Templates
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # ajuste depois se quiser limitar
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 templates = Jinja2Templates(directory="templates")
 
-# Supabase client
-supabase = get_supabase_client()
+# ============================================================
+# Supabase / DB
+# ============================================================
 
-# ========== MODELOS ==========
+try:
+    db = EMITYDatabase()
+    supabase = db.client  # reaproveita o client interno
+    logger.info("✅ EMITYDatabase e Supabase inicializados")
+except Exception as e:
+    logger.error(f"❌ Erro ao inicializar EMITYDatabase: {e}")
+    db = None
+    supabase = None
+
+# ============================================================
+# Pydantic Models
+# ============================================================
+
+# --- Modelos da Fase 1 (mantidos) ---
+
 class PoolResponse(BaseModel):
     address: str
     token0_symbol: str
@@ -50,12 +83,14 @@ class PoolResponse(BaseModel):
     score: int
     recommendation: Optional[str] = None
 
+
 class RangeData(BaseModel):
     min_price: float
     max_price: float
     spread_percent: float
     strategy: str
     description: str
+
 
 class SimulationData(BaseModel):
     time_in_range: float
@@ -65,6 +100,7 @@ class SimulationData(BaseModel):
     gas_cost: float
     net_after_gas: float
 
+
 class CustomPoolRequest(BaseModel):
     address: str
     pair: Optional[str] = None
@@ -72,14 +108,37 @@ class CustomPoolRequest(BaseModel):
     max_range: Optional[float] = None
     capital: Optional[float] = 1000
 
+
 class FavoritePoolRequest(BaseModel):
     address: str
     is_custom: bool = False
 
-# ========== FUNÇÕES AUXILIARES ==========
 
-def safe_float(value, default=0.0):
-    """Converte valor para float de forma segura"""
+# --- Modelos da Fase 2 (config / risco) ---
+
+class ConfigUpdate(BaseModel):
+    """Payload para atualizar a configuração de risco do usuário"""
+    capital_total: Optional[float] = Field(None, ge=100, le=10_000_000)
+    perfil_risco: Optional[str] = Field(
+        None, pattern="^(conservador|moderado|agressivo)$"
+    )
+    max_positions: Optional[int] = Field(None, ge=1, le=20)
+    stop_loss: Optional[float] = Field(None, ge=1, le=50)
+    max_position_size: Optional[float] = Field(None, ge=5, le=100)
+    min_score: Optional[int] = Field(None, ge=0, le=100)
+    gas_multiplier: Optional[float] = Field(None, ge=1, le=10)
+
+
+class PositionSizeRequest(BaseModel):
+    pool_address: str
+    override_pct: Optional[float] = None
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def safe_float(value, default: float = 0.0) -> float:
     if value is None:
         return default
     try:
@@ -87,8 +146,8 @@ def safe_float(value, default=0.0):
     except (TypeError, ValueError):
         return default
 
-def safe_int(value, default=0):
-    """Converte valor para int de forma segura"""
+
+def safe_int(value, default: int = 0) -> int:
     if value is None:
         return default
     try:
@@ -96,460 +155,638 @@ def safe_int(value, default=0):
     except (TypeError, ValueError):
         return default
 
-# ========== ENDPOINTS PRINCIPAIS ==========
+
+def build_simulation_7d_from_pool(pool: Dict) -> Optional[Dict]:
+    """Extrai um bloco compacto simulation_7d a partir de simulations_data da pool.
+
+    - Usa o melhor range com base em net_after_gas (7d)
+    - Converte net_return/net_after_gas (que são %) em retorno estimado em USD
+      assumindo capital de 1000 USDT (consistente com o analyzer)
+    """
+    sims_raw = pool.get("simulations_data") or pool.get("simulations")  # pode já estar carregado
+    if not sims_raw:
+        return None
+
+    try:
+        simulations = sims_raw
+        if isinstance(sims_raw, str):
+            simulations = json.loads(sims_raw)
+    except Exception:
+        logger.warning(
+            "Não foi possível parsear simulations_data para pool %s",
+            pool.get("pool_address") or pool.get("address"),
+        )
+        return None
+
+    best = None
+    best_net_after_gas_7d = -1e9
+
+    for strategy, data in simulations.items():
+        period_7d = data.get("7d") or {}
+        net_after_gas = safe_float(period_7d.get("net_after_gas", 0))
+        if net_after_gas > best_net_after_gas_7d:
+            best_net_after_gas_7d = net_after_gas
+            best = period_7d
+
+    if not best:
+        return None
+
+    # best contém campos em %, baseando-se em capital de 1000
+    net_return_pct = safe_float(best.get("net_after_gas", best.get("net_return", 0)))
+    il_pct = safe_float(best.get("impermanent_loss", 0))
+
+    # converter % para retorno estimado em USDT assumindo 1000
+    capital_ref = 1000.0
+    net_return_usd = capital_ref * (net_return_pct / 100.0)
+
+    return {
+        "net_return": net_return_usd,
+        "il_percentage": il_pct,
+        "raw": {
+            "net_after_gas_pct": net_return_pct,
+            "impermanent_loss_pct": il_pct,
+        },
+    }
+
+
+def attach_simulation_7d(pool: Dict) -> Dict:
+    """Garante que a pool tenha o campo simulation_7d esperado pelo RiskEngine."""
+    sim_7d = build_simulation_7d_from_pool(pool)
+    if sim_7d:
+        pool["simulation_7d"] = sim_7d
+    return pool
+
+
+# ============================================================
+# ROOT / HEALTH
+# ============================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Página principal com dashboard"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    """Página principal do dashboard (templates/index.html)"""
+    try:
+        return templates.TemplateResponse("index.html", {"request": request})
+    except Exception:
+        return HTMLResponse(
+            content="<h1>EMITY System</h1><p>Dashboard em deploy...</p>",
+        )
+
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "EMITY System",
-        "version": "1.0.0"
+    """Health check unificado (infra + componentes)"""
+    components_status = {
+        "database": db is not None,
+        "supabase_client": supabase is not None,
     }
 
-# ========== SCANNER ENDPOINTS ==========
+    all_healthy = all(components_status.values())
 
-@app.get("/api/scan")
-async def trigger_scan(background_tasks: BackgroundTasks):
-    """Dispara scan manual de pools"""
-    try:
-        # Executar scan em background
-        background_tasks.add_task(run_scan_task)
-        
-        return {
-            "status": "success",
-            "message": "Scan iniciado em background",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Erro ao iniciar scan: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "status": "healthy" if all_healthy else "degraded",
+        "components": components_status,
+        "service": "EMITY System",
+        "version": app.version,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+# ============================================================
+# SCANNER (Fase 1)
+# ============================================================
 
 async def run_scan_task():
-    """Task de scan em background"""
+    """Task de scan em background (usa scanner.run_scanner + analyze_all_pools)."""
+    if not supabase:
+        logger.error("run_scan_task chamado sem supabase client")
+        return
+
     try:
         logger.info("🚀 Iniciando scan task...")
         pools = await run_scanner(supabase)
-        
+
         if pools:
-            logger.info(f"✅ Scan completo: {len(pools)} pools encontradas")
-            # Analisar pools após scan
+            logger.info("✅ Scan completo: %d pools encontradas", len(pools))
             await analyze_all_pools(supabase)
         else:
             logger.warning("⚠️ Nenhuma pool encontrada no scan")
-            
-    except Exception as e:
-        logger.error(f"❌ Erro na scan task: {str(e)}")
 
-# ========== POOLS CUSTOMIZADAS ENDPOINTS ==========
+    except Exception as e:
+        logger.error(f"❌ Erro na scan task: {e}")
+
+
+@app.get("/api/scan")
+async def trigger_scan(background_tasks: BackgroundTasks):
+    """Dispara scan manual de pools (em background)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
+    try:
+        background_tasks.add_task(run_scan_task)
+        return {
+            "status": "success",
+            "message": "Scan iniciado em background",
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Erro ao iniciar scan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# POOLS CUSTOM / FAVORITOS (Fase 1)
+# ============================================================
 
 @app.post("/api/custom-pool")
-async def add_custom_pool_endpoint(pool_data: CustomPoolRequest, background_tasks: BackgroundTasks):
-    """Adiciona uma pool customizada para análise"""
+async def add_custom_pool_endpoint(
+    pool_data: CustomPoolRequest, background_tasks: BackgroundTasks
+):
+    """Adiciona uma pool customizada para análise e marca como favorita."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Validar endereço
-        if not pool_data.address or not pool_data.address.startswith('0x'):
+        if not pool_data.address or not pool_data.address.startswith("0x"):
             raise HTTPException(status_code=400, detail="Endereço inválido")
-        
-        # Adicionar pool customizada
-        success = await add_custom_pool(supabase, pool_data.address.lower(), pool_data.pair)
-        
-        if success:
-            # Marcar como favorita automaticamente
-            favorite_data = {
-                'pool_address': pool_data.address.lower(),
-                'is_custom': True,
-                'min_range': pool_data.min_range,
-                'max_range': pool_data.max_range,
-                'capital': pool_data.capital,
-                'added_at': datetime.utcnow().isoformat()
-            }
-            
-            # Verificar se já existe
-            existing = supabase.table('favorite_pools').select('*').eq('pool_address', pool_data.address.lower()).execute()
-            
-            if not existing.data:
-                supabase.table('favorite_pools').insert(favorite_data).execute()
-            else:
-                supabase.table('favorite_pools').update(favorite_data).eq('pool_address', pool_data.address.lower()).execute()
-            
-            # Analisar em background
-            background_tasks.add_task(analyze_custom_pool_task, pool_data.address.lower())
-            
-            return {
-                "status": "success",
-                "message": f"Pool {pool_data.address} adicionada com sucesso",
-                "address": pool_data.address.lower()
-            }
+
+        address = pool_data.address.lower()
+
+        success = await add_custom_pool(supabase, address, pool_data.pair)
+
+        if not success:
+            raise HTTPException(
+                status_code=404, detail="Pool não encontrada ou erro ao adicionar"
+            )
+
+        favorite_data = {
+            "pool_address": address,
+            "is_custom": True,
+            "min_range": pool_data.min_range,
+            "max_range": pool_data.max_range,
+            "capital": pool_data.capital,
+            "added_at": datetime.utcnow().isoformat(),
+        }
+
+        existing = (
+            supabase.table("favorite_pools")
+            .select("*")
+            .eq("pool_address", address)
+            .execute()
+        )
+
+        if not existing.data:
+            supabase.table("favorite_pools").insert(favorite_data).execute()
         else:
-            raise HTTPException(status_code=404, detail="Pool não encontrada ou erro ao adicionar")
-            
+            supabase.table("favorite_pools").update(favorite_data).eq(
+                "pool_address", address
+            ).execute()
+
+        # analisar em background
+        background_tasks.add_task(analyze_custom_pool_task, address)
+
+        return {
+            "status": "success",
+            "message": f"Pool {address} adicionada com sucesso",
+            "address": address,
+        }
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro ao adicionar pool customizada: {str(e)}")
+        logger.error(f"Erro ao adicionar pool customizada: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 async def analyze_custom_pool_task(address: str):
-    """Analisa pool customizada em background"""
+    """Analisa pool customizada em background (usa PoolAnalyzer da Fase 1)."""
+    if not supabase:
+        logger.error("analyze_custom_pool_task chamado sem supabase client")
+        return
+
     try:
         analyzer = PoolAnalyzer(supabase)
         await analyzer.analyze_pool(address)
-        logger.info(f"✅ Análise completa para pool customizada {address}")
+        logger.info("✅ Análise completa para pool customizada %s", address)
     except Exception as e:
-        logger.error(f"❌ Erro ao analisar pool customizada {address}: {str(e)}")
+        logger.error(f"❌ Erro ao analisar pool customizada {address}: {e}")
+
 
 @app.delete("/api/custom-pool/{address}")
 async def remove_custom_pool(address: str):
-    """Remove uma pool customizada"""
+    """Remove uma pool customizada dos favoritos."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Remover dos favoritos
-        supabase.table('favorite_pools').delete().eq('pool_address', address.lower()).execute()
-        
-        # Opcionalmente remover da tabela pools (ou apenas marcar como não-favorita)
-        # supabase.table('pools').delete().eq('address', address.lower()).execute()
-        
+        supabase.table("favorite_pools").delete().eq(
+            "pool_address", address.lower()
+        ).execute()
+
         return {
             "status": "success",
-            "message": f"Pool {address} removida dos favoritos"
+            "message": f"Pool {address} removida dos favoritos",
         }
-        
     except Exception as e:
-        logger.error(f"Erro ao remover pool: {str(e)}")
+        logger.error(f"Erro ao remover pool: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/favorite-pools")
 async def get_favorite_pools():
-    """Retorna pools favoritas/customizadas"""
+    """Retorna pools favoritas/customizadas com detalhes."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Buscar favoritos
-        favorites = supabase.table('favorite_pools').select('*').execute()
-        
-        # Buscar detalhes das pools
-        pools_data = []
-        for fav in favorites.data:
-            pool_result = supabase.table('pools').select('*').eq('address', fav['pool_address']).execute()
+        favorites = supabase.table("favorite_pools").select("*").execute()
+
+        pools_data: List[Dict] = []
+        for fav in favorites.data or []:
+            pool_result = (
+                supabase.table("pools")
+                .select("*")
+                .eq("address", fav["pool_address"])
+                .execute()
+            )
             if pool_result.data:
                 pool = pool_result.data[0]
-                pool['is_favorite'] = True
-                pool['is_custom'] = fav.get('is_custom', False)
-                pool['custom_min_range'] = fav.get('min_range')
-                pool['custom_max_range'] = fav.get('max_range')
-                pool['custom_capital'] = fav.get('capital')
+                pool["is_favorite"] = True
+                pool["is_custom"] = fav.get("is_custom", False)
+                pool["custom_min_range"] = fav.get("min_range")
+                pool["custom_max_range"] = fav.get("max_range")
+                pool["custom_capital"] = fav.get("capital")
                 pools_data.append(pool)
-        
+
         return {
             "status": "success",
             "count": len(pools_data),
-            "pools": pools_data
+            "pools": pools_data,
         }
-        
+
     except Exception as e:
-        logger.error(f"Erro ao buscar favoritos: {str(e)}")
+        logger.error(f"Erro ao buscar favoritos: {e}")
         return {"status": "success", "count": 0, "pools": []}
+
 
 @app.post("/api/favorite-pool")
 async def toggle_favorite(favorite_data: FavoritePoolRequest):
-    """Adiciona/remove pool dos favoritos"""
+    """Adiciona/remove pool dos favoritos (tabela favorite_pools)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Verificar se já é favorita
-        existing = supabase.table('favorite_pools').select('*').eq('pool_address', favorite_data.address.lower()).execute()
-        
+        address = favorite_data.address.lower()
+
+        existing = (
+            supabase.table("favorite_pools")
+            .select("*")
+            .eq("pool_address", address)
+            .execute()
+        )
+
         if existing.data:
-            # Remover dos favoritos
-            supabase.table('favorite_pools').delete().eq('pool_address', favorite_data.address.lower()).execute()
-            return {"status": "success", "message": "Pool removida dos favoritos", "is_favorite": False}
-        else:
-            # Adicionar aos favoritos
-            data = {
-                'pool_address': favorite_data.address.lower(),
-                'is_custom': favorite_data.is_custom,
-                'added_at': datetime.utcnow().isoformat()
+            supabase.table("favorite_pools").delete().eq(
+                "pool_address", address
+            ).execute()
+            return {
+                "status": "success",
+                "message": "Pool removida dos favoritos",
+                "is_favorite": False,
             }
-            supabase.table('favorite_pools').insert(data).execute()
-            return {"status": "success", "message": "Pool adicionada aos favoritos", "is_favorite": True}
-            
+        else:
+            data = {
+                "pool_address": address,
+                "is_custom": favorite_data.is_custom,
+                "added_at": datetime.utcnow().isoformat(),
+            }
+            supabase.table("favorite_pools").insert(data).execute()
+            return {
+                "status": "success",
+                "message": "Pool adicionada aos favoritos",
+                "is_favorite": True,
+            }
+
     except Exception as e:
-        logger.error(f"Erro ao alternar favorito: {str(e)}")
+        logger.error(f"Erro ao alternar favorito: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ========== POOLS ENDPOINTS ==========
+
+# ============================================================
+# POOLS / RECOMENDAÇÕES / POSIÇÕES (Fase 1)
+# ============================================================
 
 @app.get("/api/pools")
 async def get_pools(
     limit: int = 50,
     min_score: Optional[int] = None,
     min_tvl: Optional[float] = None,
-    include_favorites: bool = True
+    include_favorites: bool = True,
 ):
-    """Retorna lista de pools do banco"""
+    """Retorna lista de pools do banco (com filtros)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        query = supabase.table('pools').select('*')
-        
-        # Aplicar filtros
-        if min_score:
-            query = query.gte('score', min_score)
-        if min_tvl:
-            query = query.gte('tvl_usd', min_tvl)
-        
-        # Ordenar por score e limitar
-        query = query.order('score', desc=True).limit(limit)
-        
+        query = supabase.table("pools").select("*")
+
+        if min_score is not None:
+            query = query.gte("score", min_score)
+        if min_tvl is not None:
+            query = query.gte("tvl_usd", min_tvl)
+
+        query = query.order("score", desc=True).limit(limit)
         result = query.execute()
-        
-        # Marcar favoritos se solicitado
+        pools = result.data or []
+
         if include_favorites:
-            favorites = supabase.table('favorite_pools').select('pool_address, is_custom').execute()
-            fav_addresses = {f['pool_address']: f['is_custom'] for f in favorites.data}
-            
-            for pool in result.data:
-                pool['is_favorite'] = pool['address'] in fav_addresses
-                pool['is_custom'] = fav_addresses.get(pool['address'], False)
-        
-        return {
-            "status": "success",
-            "count": len(result.data),
-            "pools": result.data
-        }
-        
+            favorites = supabase.table("favorite_pools").select(
+                "pool_address, is_custom"
+            ).execute()
+            fav_addresses = {f["pool_address"]: f["is_custom"] for f in favorites.data or []}
+
+            for pool in pools:
+                addr = pool.get("address") or pool.get("pool_address")
+                pool["is_favorite"] = addr in fav_addresses
+                pool["is_custom"] = fav_addresses.get(addr, False)
+
+        return {"status": "success", "count": len(pools), "pools": pools}
+
     except Exception as e:
-        logger.error(f"Erro ao buscar pools: {str(e)}")
+        logger.error(f"Erro ao buscar pools: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/pools/{address}")
 async def get_pool_details(address: str):
-    """Retorna detalhes completos de uma pool incluindo ranges"""
+    """Retorna detalhes completos de uma pool incluindo ranges/simulações."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Buscar pool
-        result = supabase.table('pools').select('*').eq('address', address.lower()).execute()
-        
+        result = (
+            supabase.table("pools")
+            .select("*")
+            .eq("address", address.lower())
+            .execute()
+        )
+
         if not result.data:
             raise HTTPException(status_code=404, detail="Pool não encontrada")
-        
+
         pool = result.data[0]
-        
-        # Parse ranges e simulations se existirem
-        if pool.get('ranges_data'):
-            pool['ranges'] = json.loads(pool['ranges_data'])
-        if pool.get('simulations_data'):
-            pool['simulations'] = json.loads(pool['simulations_data'])
-        
-        # Verificar se é favorita
-        favorite = supabase.table('favorite_pools').select('*').eq('pool_address', address.lower()).execute()
-        pool['is_favorite'] = len(favorite.data) > 0
-        pool['is_custom'] = favorite.data[0].get('is_custom', False) if favorite.data else False
-        
-        return {
-            "status": "success",
-            "pool": pool
-        }
-        
+
+        if pool.get("ranges_data"):
+            try:
+                pool["ranges"] = json.loads(pool["ranges_data"])
+            except Exception:
+                pool["ranges"] = {}
+
+        if pool.get("simulations_data"):
+            try:
+                pool["simulations"] = json.loads(pool["simulations_data"])
+            except Exception:
+                pool["simulations"] = {}
+
+        favorite = (
+            supabase.table("favorite_pools")
+            .select("*")
+            .eq("pool_address", address.lower())
+            .execute()
+        )
+        pool["is_favorite"] = bool(favorite.data)
+        pool["is_custom"] = (
+            favorite.data[0].get("is_custom", False) if favorite.data else False
+        )
+
+        return {"status": "success", "pool": pool}
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro ao buscar detalhes da pool: {str(e)}")
+        logger.error(f"Erro ao buscar detalhes da pool: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ========== RECOMMENDATIONS ENDPOINTS ==========
 
 @app.get("/api/recommendations")
 async def get_recommendations(limit: int = 10, include_custom: bool = True):
-    """Retorna top pools recomendadas por score com destaque para customizadas"""
+    """Retorna top pools recomendadas por score com destaque para customizadas."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Buscar todas as pools com score >= 60
-        result = supabase.table('pools')\
-            .select('*')\
-            .gte('score', 60)\
-            .order('score', desc=True)\
-            .limit(limit * 2)\
+        result = (
+            supabase.table("pools")
+            .select("*")
+            .gte("score", 60)
+            .order("score", desc=True)
+            .limit(limit * 2)
             .execute()
-        
-        pools = result.data
-        
-        # Buscar favoritos/customizadas
-        favorites = supabase.table('favorite_pools').select('*').execute()
-        fav_data = {f['pool_address']: f for f in favorites.data}
-        
-        # Separar pools customizadas e normais
-        custom_pools = []
-        regular_pools = []
-        
+        )
+
+        pools = result.data or []
+
+        favorites = supabase.table("favorite_pools").select("*").execute()
+        fav_data = {f["pool_address"]: f for f in favorites.data or []}
+
+        custom_pools: List[Dict] = []
+        regular_pools: List[Dict] = []
+
         for pool in pools:
-            # Parse ranges se existir
             ranges = {}
-            if pool.get('ranges_data'):
+            if pool.get("ranges_data"):
                 try:
-                    ranges = json.loads(pool['ranges_data'])
-                except:
-                    pass
-            
-            # Melhor range baseado em simulações
-            best_range = 'optimized'
-            best_return = -999
-            if pool.get('simulations_data'):
+                    ranges = json.loads(pool["ranges_data"])
+                except Exception:
+                    ranges = {}
+
+            best_range = "optimized"
+            best_return = -999.0
+            if pool.get("simulations_data"):
                 try:
-                    simulations = json.loads(pool['simulations_data'])
+                    simulations = json.loads(pool["simulations_data"])
                     for strategy, sim in simulations.items():
-                        ret = safe_float(sim.get('30d', {}).get('net_after_gas', -999))
+                        ret = safe_float(sim.get("30d", {}).get("net_after_gas", -999))
                         if ret > best_return:
                             best_return = ret
                             best_range = strategy
-                except:
+                except Exception:
                     pass
-            
+
+            addr = pool.get("address") or pool.get("pool_address")
             rec = {
-                "address": pool['address'],
-                "pair": f"{pool['token0_symbol']}/{pool['token1_symbol']}",
-                "score": safe_int(pool.get('score', 0)),
-                "tvl_usd": safe_float(pool.get('tvl_usd', 0)),
-                "volume_24h": safe_float(pool.get('volume_24h', 0)),
-                "fee_apr": safe_float(pool.get('fee_apr', 0)),
-                "il_7d": safe_float(pool.get('il_7d', 0)),
-                "recommendation": pool.get('recommendation', ''),
+                "address": addr,
+                "pair": f"{pool.get('token0_symbol', 'TOKEN0')}/{pool.get('token1_symbol', 'TOKEN1')}",
+                "score": safe_int(pool.get("score", 0)),
+                "tvl_usd": safe_float(pool.get("tvl_usd", 0)),
+                "volume_24h": safe_float(pool.get("volume_24h", 0)),
+                "fee_apr": safe_float(pool.get("fee_apr", 0)),
+                "il_7d": safe_float(pool.get("il_7d", 0)),
+                "recommendation": pool.get("recommendation", ""),
                 "best_range": best_range,
                 "ranges": ranges,
-                "explanation": pool.get('explanation', ''),
-                "is_favorite": pool['address'] in fav_data,
-                "is_custom": fav_data.get(pool['address'], {}).get('is_custom', False)
+                "explanation": pool.get("explanation", ""),
+                "is_favorite": addr in fav_data,
+                "is_custom": fav_data.get(addr, {}).get("is_custom", False),
             }
-            
-            # Adicionar dados customizados se existirem
-            if pool['address'] in fav_data:
-                fav = fav_data[pool['address']]
-                rec['custom_min_range'] = fav.get('min_range')
-                rec['custom_max_range'] = fav.get('max_range')
-                rec['custom_capital'] = fav.get('capital')
-            
-            # Separar customizadas das regulares
-            if rec['is_custom']:
+
+            if addr in fav_data:
+                fav = fav_data[addr]
+                rec["custom_min_range"] = fav.get("min_range")
+                rec["custom_max_range"] = fav.get("max_range")
+                rec["custom_capital"] = fav.get("capital")
+
+            if rec["is_custom"]:
                 custom_pools.append(rec)
             else:
                 regular_pools.append(rec)
-        
-        # Combinar listas: customizadas primeiro
+
         all_recommendations = custom_pools + regular_pools
-        
+
         return {
             "status": "success",
             "count": len(all_recommendations[:limit]),
             "custom_count": len(custom_pools),
             "recommendations": all_recommendations[:limit],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
+
     except Exception as e:
-        logger.error(f"Erro ao buscar recomendações: {str(e)}")
+        logger.error(f"Erro ao buscar recomendações: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ========== ACTIVE POSITIONS ENDPOINTS ==========
 
 @app.get("/api/positions")
 async def get_active_positions():
-    """Retorna posições ativas do usuário"""
+    """Retorna posições ativas da tabela positions (se existir)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        result = supabase.table('positions')\
-            .select('*')\
-            .eq('status', 'active')\
+        result = (
+            supabase.table("positions")
+            .select("*")
+            .eq("status", "active")
             .execute()
-        
+        )
+
         return {
             "status": "success",
-            "count": len(result.data),
-            "positions": result.data
+            "count": len(result.data or []),
+            "positions": result.data or [],
         }
-        
+
     except Exception as e:
-        logger.error(f"Erro ao buscar posições: {str(e)}")
+        logger.error(f"Erro ao buscar posições: {e}")
         return {"status": "success", "count": 0, "positions": []}
+
 
 @app.post("/api/positions")
 async def create_position(position: Dict):
-    """Cria nova posição"""
+    """Cria nova posição na tabela positions."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        position['created_at'] = datetime.utcnow().isoformat()
-        position['status'] = 'active'
-        
-        result = supabase.table('positions').insert(position).execute()
-        
-        return {
-            "status": "success",
-            "position": result.data[0]
-        }
-        
+        position["created_at"] = datetime.utcnow().isoformat()
+        position["status"] = "active"
+
+        result = supabase.table("positions").insert(position).execute()
+
+        return {"status": "success", "position": (result.data or [None])[0]}
     except Exception as e:
-        logger.error(f"Erro ao criar posição: {str(e)}")
+        logger.error(f"Erro ao criar posição: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ========== ANÁLISE ENDPOINTS ==========
+
+# ============================================================
+# ANÁLISE DE POOL (Fase 1)
+# ============================================================
 
 @app.post("/api/analyze/{address}")
 async def analyze_pool(address: str, background_tasks: BackgroundTasks):
-    """Dispara análise para uma pool específica"""
+    """Dispara análise para uma pool específica (em background)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Verificar se pool existe
-        result = supabase.table('pools').select('address').eq('address', address.lower()).execute()
-        
+        result = (
+            supabase.table("pools")
+            .select("address")
+            .eq("address", address.lower())
+            .execute()
+        )
+
         if not result.data:
-            # Tentar adicionar como pool customizada
             success = await add_custom_pool(supabase, address.lower())
             if not success:
                 raise HTTPException(status_code=404, detail="Pool não encontrada")
-        
-        # Analisar em background
+
         background_tasks.add_task(analyze_single_pool, address.lower())
-        
+
         return {
             "status": "success",
             "message": f"Análise iniciada para pool {address}",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro ao iniciar análise: {str(e)}")
+        logger.error(f"Erro ao iniciar análise: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 async def analyze_single_pool(address: str):
-    """Analisa uma pool específica"""
+    """Analisa uma pool específica usando PoolAnalyzer (Fase 1)."""
+    if not supabase:
+        logger.error("analyze_single_pool chamado sem supabase client")
+        return
+
     try:
         analyzer = PoolAnalyzer(supabase)
         await analyzer.analyze_pool(address)
-        logger.info(f"✅ Análise completa para pool {address}")
+        logger.info("✅ Análise completa para pool %s", address)
     except Exception as e:
-        logger.error(f"❌ Erro ao analisar pool {address}: {str(e)}")
+        logger.error(f"❌ Erro ao analisar pool {address}: {e}")
 
-# ========== DASHBOARD DATA ENDPOINT (CORRIGIDO) ==========
+
+# ============================================================
+# DASHBOARD (Fase 1)
+# ============================================================
 
 @app.get("/api/dashboard")
 async def get_dashboard_data():
-    """Retorna dados consolidados para o dashboard"""
+    """Retorna dados consolidados para o dashboard principal."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
     try:
-        # Buscar estatísticas
-        pools_result = supabase.table('pools').select('*').execute()
-        positions_result = supabase.table('positions').select('*').eq('status', 'active').execute()
-        
-        pools = pools_result.data if pools_result.data else []
-        positions = positions_result.data if positions_result.data else []
-        
-        # Calcular métricas com proteção contra None
-        total_tvl = sum(safe_float(p.get('tvl_usd', 0)) for p in pools)
-        total_volume = sum(safe_float(p.get('volume_24h', 0)) for p in pools)
-        
-        # Calcular APR médio com proteção
-        aprs = [safe_float(p.get('fee_apr', 0)) for p in pools if p.get('fee_apr') is not None]
+        pools_result = supabase.table("pools").select("*").execute()
+        positions_result = (
+            supabase.table("positions")
+            .select("*")
+            .eq("status", "active")
+            .execute()
+        )
+
+        pools = pools_result.data or []
+        positions = positions_result.data or []
+
+        total_tvl = sum(safe_float(p.get("tvl_usd", 0)) for p in pools)
+        total_volume = sum(safe_float(p.get("volume_24h", 0)) for p in pools)
+
+        aprs = [
+            safe_float(p.get("fee_apr", 0))
+            for p in pools
+            if p.get("fee_apr") is not None
+        ]
         avg_apr = sum(aprs) / len(aprs) if aprs else 0
-        
-        # Top performers
-        scored_pools = [p for p in pools if p.get('score') is not None]
-        top_pools = sorted(scored_pools, key=lambda x: safe_int(x.get('score', 0)), reverse=True)[:5]
-        
+
+        scored_pools = [p for p in pools if p.get("score") is not None]
+        top_pools = sorted(
+            scored_pools, key=lambda x: safe_int(x.get("score", 0)), reverse=True
+        )[:5]
+
         return {
             "status": "success",
             "metrics": {
@@ -558,22 +795,26 @@ async def get_dashboard_data():
                 "total_tvl": total_tvl,
                 "total_volume_24h": total_volume,
                 "average_apr": avg_apr,
-                "pools_analyzed": len([p for p in pools if safe_int(p.get('score', 0)) > 0])
+                "pools_analyzed": len(
+                    [p for p in pools if safe_int(p.get("score", 0)) > 0]
+                ),
             },
             "top_pools": [
                 {
                     "pair": f"{p.get('token0_symbol', 'TOKEN0')}/{p.get('token1_symbol', 'TOKEN1')}",
-                    "score": safe_int(p.get('score', 0)),
-                    "tvl": safe_float(p.get('tvl_usd', 0)),
-                    "apr": safe_float(p.get('fee_apr', 0))
-                } for p in top_pools
+                    "score": safe_int(p.get("score", 0)),
+                    "tvl": safe_float(p.get("tvl_usd", 0)),
+                    "apr": safe_float(p.get("fee_apr", 0)),
+                }
+                for p in top_pools
             ],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
+
     except Exception as e:
-        logger.error(f"Erro ao buscar dados do dashboard: {str(e)}")
+        logger.error(f"Erro ao buscar dados do dashboard: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return {
             "status": "error",
@@ -583,52 +824,284 @@ async def get_dashboard_data():
                 "total_tvl": 0,
                 "total_volume_24h": 0,
                 "average_apr": 0,
-                "pools_analyzed": 0
+                "pools_analyzed": 0,
             },
             "top_pools": [],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
 
-# ========== STARTUP EVENTS ==========
+
+# ============================================================
+# CONFIG / MOTOR DE RISCO (Fase 2)
+# ============================================================
+
+@app.get("/api/config")
+async def get_user_config():
+    """Busca configuração atual do usuário (via EMITYDatabase)."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        config = db.get_user_config()
+        return {"success": True, "config": config}
+    except Exception as e:
+        logger.error(f"Erro ao buscar config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config")
+async def update_user_config(config_update: ConfigUpdate):
+    """Atualiza configuração de risco do usuário."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        updates = {k: v for k, v in config_update.dict().items() if v is not None}
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+        if db.update_user_config(updates):
+            new_config = db.get_user_config()
+            return {
+                "success": True,
+                "message": "Configuração atualizada",
+                "config": new_config,
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Erro ao salvar configuração")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao atualizar config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/position-size")
+async def calculate_position_size(request: PositionSizeRequest):
+    """Calcula tamanho ideal da posição para uma pool, já validando gas."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        config = db.get_user_config()
+        if not config:
+            raise HTTPException(status_code=404, detail="Configuração não encontrada")
+
+        pool = db.get_pool_by_address(request.pool_address)
+        if not pool:
+            raise HTTPException(status_code=404, detail="Pool não encontrada")
+
+        # anexar simulation_7d a partir de simulations_data da tabela pools
+        pool = attach_simulation_7d(pool)
+
+        risk_engine = RiskEngine(config)
+        position = risk_engine.calculate_position_size(pool, request.override_pct)
+
+        return {
+            "success": True,
+            "pool_address": request.pool_address,
+            "pair": pool.get("pair") or f"{pool.get('token0_symbol', 'TOKEN0')}/{pool.get('token1_symbol', 'TOKEN1')}",
+            "position": position,
+            "config": {
+                "capital_total": config["capital_total"],
+                "perfil_risco": config["perfil_risco"],
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao calcular position size: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market-check")
+async def check_market_conditions():
+    """Verifica se as condições de mercado permitem operar, usando RiskEngine."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        config = db.get_user_config()
+        if not config:
+            raise HTTPException(status_code=404, detail="Configuração não encontrada")
+
+        pools = db.get_pools(min_score=0, limit=100) or []
+
+        for p in pools:
+            attach_simulation_7d(p)
+
+        risk_engine = RiskEngine(config)
+        market_check = risk_engine.check_market_conditions(pools)
+
+        return {
+            "success": True,
+            "timestamp": datetime.utcnow().isoformat(),
+            "market": market_check,
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao verificar mercado: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/portfolio-allocation")
+async def get_portfolio_allocation():
+    """Calcula alocação ótima do portfólio com base nas melhores pools."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        config = db.get_user_config()
+        if not config:
+            raise HTTPException(status_code=404, detail="Configuração não encontrada")
+
+        pools = db.get_pools(min_score=50, limit=50) or []
+        for p in pools:
+            attach_simulation_7d(p)
+
+        risk_engine = RiskEngine(config)
+        allocation = risk_engine.calculate_portfolio_allocation(pools)
+
+        return {
+            "success": True,
+            "timestamp": datetime.utcnow().isoformat(),
+            "allocation": allocation,
+            "config": {
+                "capital_total": config["capital_total"],
+                "perfil_risco": config["perfil_risco"],
+                "max_positions": config["max_positions"],
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao calcular alocação: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sync-position-value")
+async def sync_position_value(value: float, value_type: str = "pct"):
+    """Sincroniza valores entre % e USDT usando capital_total da config."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        config = db.get_user_config()
+        if not config:
+            raise HTTPException(status_code=404, detail="Configuração não encontrada")
+
+        risk_engine = RiskEngine(config)
+        pct, usdt = risk_engine.sync_position_values(value, value_type)
+
+        return {
+            "success": True,
+            "percentage": pct,
+            "usdt": usdt,
+            "capital_total": config["capital_total"],
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao sincronizar valores: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/portfolio-stats")
+async def api_get_portfolio_stats():
+    """Exposição / PnL agregado do portfólio (usando EMITYDatabase)."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        stats = db.get_portfolio_stats()
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        logger.error(f"Erro ao buscar estatísticas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts")
+async def get_alerts(limit: int = Query(20, ge=1, le=100)):
+    """Busca alertas recentes gerados pelo sistema (tabela alerts)."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database não disponível")
+
+    try:
+        alerts = db.get_recent_alerts(limit=limit)
+        return {
+            "success": True,
+            "count": len(alerts),
+            "alerts": alerts,
+        }
+    except Exception as e:
+        logger.error(f"Erro ao buscar alertas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# STARTUP / SCHEDULED
+# ============================================================
 
 @app.on_event("startup")
 async def startup_event():
-    """Executado ao iniciar a aplicação"""
-    logger.info("🚀 EMITY System iniciando...")
-    logger.info("📊 Dashboard: https://emity-system.onrender.com")
-    logger.info("📡 API Docs: https://emity-system.onrender.com/docs")
-    
-    # Criar tabela de favoritos se não existir
-    try:
-        # Verificar se tabela existe (tentativa de select)
-        supabase.table('favorite_pools').select('pool_address').limit(1).execute()
-    except:
-        # Se der erro, a tabela não existe - você precisa criar no Supabase
-        logger.warning("⚠️ Tabela 'favorite_pools' não existe. Crie no Supabase com campos: pool_address, is_custom, min_range, max_range, capital, added_at")
-    
-    # Agendar primeiro scan em 1 minuto
-    asyncio.create_task(initial_scan())
+    """Executado ao iniciar a aplicação."""
+    logger.info("=" * 60)
+    logger.info("🚀 EMITY System iniciando - FASE 2 (LP + Risco)")
+    logger.info("API rodando...")
+
+    # checar favorite_pools
+    if supabase:
+        try:
+            supabase.table("favorite_pools").select("pool_address").limit(1).execute()
+        except Exception:
+            logger.warning(
+                "⚠️ Tabela 'favorite_pools' não existe. Crie no Supabase com: pool_address, is_custom, min_range, max_range, capital, added_at"
+            )
+
+    # log da config
+    if db:
+        try:
+            config = db.get_user_config()
+            if config:
+                logger.info(
+                    "📊 Capital Total: $%.2f | Perfil: %s | Max posições: %s",
+                    config.get("capital_total", 0),
+                    config.get("perfil_risco", "N/A"),
+                    config.get("max_positions", "N/A"),
+                )
+        except Exception:
+            pass
+
+    # agendar scan inicial
+    if supabase:
+        asyncio.create_task(initial_scan())
+
 
 async def initial_scan():
-    """Scan inicial após startup"""
-    await asyncio.sleep(60)  # Aguardar 1 minuto
+    """Scan inicial após startup (espera 60s para evitar cold start)."""
+    await asyncio.sleep(60)
     logger.info("🔄 Executando scan inicial...")
     await run_scan_task()
 
-# ========== SCHEDULED TASKS (para Worker) ==========
 
 async def scheduled_scanner():
-    """Scanner agendado para rodar periodicamente"""
+    """Loop opcional de scanner agendado (caso queira rodar em worker separado)."""
     while True:
         try:
             logger.info("⏰ Executando scan agendado...")
             await run_scan_task()
-            await asyncio.sleep(1800)  # 30 minutos
+            await asyncio.sleep(1800)  # 30 min
         except Exception as e:
-            logger.error(f"Erro no scanner agendado: {str(e)}")
-            await asyncio.sleep(300)  # Retry em 5 minutos
+            logger.error(f"Erro no scanner agendado: {e}")
+            await asyncio.sleep(300)
+
+
+# ============================================================
+# ENTRYPOINT LOCAL
+# ============================================================
 
 if __name__ == "__main__":
     import uvicorn
+
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
