@@ -84,10 +84,9 @@
         }
 
         .logo-text {
-            font-size: 22px;
-            font-weight: 800;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
+            font-size: 26px;
+            font-weight: 900;
+            letter-spacing: -1px;
             background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-info) 50%, var(--accent-primary) 100%);
             background-size: 200% 100%;
             -webkit-background-clip: text;
@@ -154,7 +153,7 @@
         }
 
         .gas-indicator {
-            font-size: 11px;
+            font-size: 13px;
             font-weight: 600;
             padding: 4px 10px;
             border-radius: 20px;
@@ -202,7 +201,7 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             color: var(--text-primary);
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
@@ -235,10 +234,8 @@
             border: none;
             background: none;
             color: var(--text-secondary);
-            font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
+            font-size: 14px;
+            font-weight: 500;
             transition: all 0.3s;
             position: relative;
             display: flex;
@@ -958,33 +955,33 @@
 
         <!-- Tabs Navigation -->
         <nav class="tabs-container">
-            <button class="tab active" onclick="showPage('dashboard')">
+            <button class="tab active" onclick="showPage('dashboard', this)">
                 <span class="tab-icon">📊</span>
                 Dashboard
             </button>
-            <button class="tab" onclick="showPage('pools')">
+            <button class="tab" onclick="showPage('pools', this)">
                 <span class="tab-icon">💎</span>
                 Pools Recomendadas
                 <span class="notification-badge">3</span>
             </button>
-            <button class="tab" onclick="showPage('active')">
+            <button class="tab" onclick="showPage('active', this)">
                 <span class="tab-icon">✅</span>
                 Pools Ativas
             </button>
-            <button class="tab" onclick="showPage('create')">
+            <button class="tab" onclick="showPage('create', this)">
                 <span class="tab-icon">➕</span>
                 Criar Pool
             </button>
-            <button class="tab" onclick="showPage('settings')">
+            <button class="tab" onclick="showPage('settings', this)">
                 <span class="tab-icon">⚙️</span>
                 Configurações
             </button>
-            <button class="tab" onclick="showPage('alerts')">
+            <button class="tab" onclick="showPage('alerts', this)">
                 <span class="tab-icon">🔔</span>
                 Alertas
                 <span class="notification-badge">5</span>
             </button>
-            <button class="tab" onclick="showPage('history')">
+            <button class="tab" onclick="showPage('history', this)">
                 <span class="tab-icon">📈</span>
                 Histórico
             </button>
@@ -1904,7 +1901,7 @@
     </div>
 
     <script>
-        function showPage(pageId) {
+        function showPage(pageId, tabElement) {
             // Hide all pages
             document.querySelectorAll('.page').forEach(page => {
                 page.classList.remove('active');
@@ -1918,8 +1915,10 @@
             // Show selected page
             document.getElementById(pageId).classList.add('active');
             
-            // Add active to clicked tab
-            event.currentTarget.classList.add('active');
+            // Add active to clicked tab (Opção A)
+            if (tabElement) {
+                tabElement.classList.add('active');
+            }
         }
 
         function showPoolDetails() {
