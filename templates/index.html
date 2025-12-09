@@ -226,6 +226,7 @@
             padding: 0 30px;
             display: flex;
             gap: 5px;
+            overflow-x: auto;
         }
 
         .tab {
@@ -241,6 +242,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            white-space: nowrap;
         }
 
         .tab:hover {
@@ -273,6 +275,134 @@
             padding: 2px 6px;
             border-radius: 10px;
             margin-left: 5px;
+        }
+
+        /* Favorite Button Styles */
+        .btn-star {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            filter: grayscale(1);
+            opacity: 0.5;
+        }
+
+        .btn-star:hover {
+            transform: scale(1.2);
+            opacity: 0.8;
+        }
+
+        .btn-star.active {
+            filter: grayscale(0);
+            opacity: 1;
+            animation: starPulse 0.5s;
+        }
+
+        @keyframes starPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+
+        /* Favorite Card Special Styles */
+        .favorite-card {
+            position: relative;
+            overflow: visible;
+        }
+
+        .favorite-ribbon {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: linear-gradient(135deg, #FFD700, #FFA500);
+            color: var(--bg-primary);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            box-shadow: 0 4px 10px rgba(255, 215, 0, 0.3);
+            animation: shimmerGold 3s infinite;
+            z-index: 10;
+        }
+
+        @keyframes shimmerGold {
+            0%, 100% { opacity: 0.9; }
+            50% { opacity: 1; }
+        }
+
+        .performance-indicator {
+            position: relative;
+            background: var(--bg-secondary);
+            border-radius: 20px;
+            height: 24px;
+            margin: 15px 0;
+            overflow: hidden;
+        }
+
+        .perf-bar {
+            height: 100%;
+            border-radius: 20px;
+            transition: width 1s ease;
+        }
+
+        .perf-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .quick-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+            padding: 15px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .quick-metrics .metric {
+            text-align: center;
+        }
+
+        .quick-metrics .label {
+            display: block;
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .quick-metrics .value {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .quick-metrics .value.success {
+            color: var(--accent-success);
+        }
+
+        .personal-note {
+            margin-top: 15px;
+        }
+
+        .personal-note textarea {
+            min-height: 60px;
+            font-size: 12px;
+            font-family: inherit;
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px;
+            color: var(--text-primary);
+            resize: none;
         }
 
         /* Mock Data Warning */
@@ -937,7 +1067,7 @@
             </div>
             <div class="header-info">
                 <div class="info-item">
-                    <div class="ia-indicator ia-online">IA</div>
+                    <div class="ia-indicator ia-online" id="ia-status">IA</div>
                 </div>
                 <div class="info-item">
                     <div class="telegram-indicator">
@@ -948,8 +1078,12 @@
                 <div class="info-item">
                     <span class="gas-indicator gas-low">Gas: 12 gwei</span>
                 </div>
-                <button class="btn-3d">📊 Relatório</button>
-                <button class="btn-3d">⚙️ Config</button>
+                <div class="info-item">
+                    <span style="color: var(--text-secondary); font-size: 12px;">Favoritas: </span>
+                    <span class="favorites-count" style="color: var(--accent-warning); font-weight: 700;">0</span>
+                </div>
+                <button class="btn-3d" onclick="generateReport()">📊 Relatório</button>
+                <button class="btn-3d" onclick="showPage('settings', document.querySelector('.tab:nth-child(5)'))">⚙️ Config</button>
             </div>
         </header>
 
@@ -975,6 +1109,11 @@
             <button class="tab" onclick="showPage('settings', this)">
                 <span class="tab-icon">⚙️</span>
                 Configurações
+            </button>
+            <button class="tab" onclick="showPage('favorites', this)">
+                <span class="tab-icon">⭐</span>
+                Favoritos
+                <span class="notification-badge favorites-badge" style="display: none;">0</span>
             </button>
             <button class="tab" onclick="showPage('alerts', this)">
                 <span class="tab-icon">🔔</span>
@@ -1159,7 +1298,10 @@
                 <div class="pool-card" onclick="showPoolDetails()">
                     <div class="pool-header">
                         <h3 class="pool-title">ETH/USDT 0.05%</h3>
-                        <span class="score-badge score-high">Score: 95</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="score-badge score-high">Score: 95</span>
+                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'ETH/USDT-0.05', 'ETH/USDT 0.05%')">⭐</button>
+                        </div>
                     </div>
                     <div class="pool-metrics">
                         <div class="metric-item">
@@ -1211,7 +1353,10 @@
                 <div class="pool-card">
                     <div class="pool-header">
                         <h3 class="pool-title">ARB/ETH 0.3%</h3>
-                        <span class="score-badge score-high">Score: 92</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="score-badge score-high">Score: 92</span>
+                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'ARB/ETH-0.3', 'ARB/ETH 0.3%')">⭐</button>
+                        </div>
                     </div>
                     <div class="pool-metrics">
                         <div class="metric-item">
@@ -1263,7 +1408,10 @@
                 <div class="pool-card">
                     <div class="pool-header">
                         <h3 class="pool-title">USDC/USDT 0.01%</h3>
-                        <span class="score-badge score-medium">Score: 85</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="score-badge score-medium">Score: 85</span>
+                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'USDC/USDT-0.01', 'USDC/USDT 0.01%')">⭐</button>
+                        </div>
                     </div>
                     <div class="pool-metrics">
                         <div class="metric-item">
@@ -1342,7 +1490,10 @@
                             </div>
                             <span>ETH/USDC 0.05%</span>
                         </div>
-                        <span class="status-badge status-active">Em Range</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="status-badge status-active">Em Range</span>
+                            <button class="btn-star" onclick="toggleFavorite(this, 'ETH/USDC-0.05-active', 'ETH/USDC 0.05%')">⭐</button>
+                        </div>
                     </div>
                     <div style="margin: 20px 0;">
                         <div style="display: flex; justify-content: space-between; margin: 10px 0;">
@@ -1382,7 +1533,10 @@
                             </div>
                             <span>WBTC/ETH 0.3%</span>
                         </div>
-                        <span class="status-badge status-warning">80% Range</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="status-badge status-warning">80% Range</span>
+                            <button class="btn-star" onclick="toggleFavorite(this, 'WBTC/ETH-0.3-active', 'WBTC/ETH 0.3%')">⭐</button>
+                        </div>
                     </div>
                     <div style="margin: 20px 0;">
                         <div style="display: flex; justify-content: space-between; margin: 10px 0;">
@@ -1422,7 +1576,10 @@
                             </div>
                             <span>ARB/ETH 1%</span>
                         </div>
-                        <span class="status-badge status-active">Em Range</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="status-badge status-active">Em Range</span>
+                            <button class="btn-star" onclick="toggleFavorite(this, 'ARB/ETH-1-active', 'ARB/ETH 1%')">⭐</button>
+                        </div>
                     </div>
                     <div style="margin: 20px 0;">
                         <div style="display: flex; justify-content: space-between; margin: 10px 0;">
@@ -1575,7 +1732,7 @@
         </div>
 
         <!-- ============================================ -->
-        <!-- CONFIGURAÇÕES PAGE (NÃO MEXER) -->
+        <!-- CONFIGURAÇÕES PAGE (FASE 2 - NÃO MEXER) -->
         <!-- ============================================ -->
         <div id="settings" class="page">
             <div style="max-width: 800px; margin: 0 auto;">
@@ -1586,23 +1743,23 @@
                     
                     <div class="form-group">
                         <label class="form-label">Banca Total (USDT)</label>
-                        <input type="text" class="form-input" value="125,430" />
+                        <input type="text" class="form-input" id="total-bank" value="125430" onchange="updateBankSettings()" />
                     </div>
 
                     <div class="form-group">
                         <label class="form-label">Perfil de Risco</label>
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                            <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;">
+                            <div class="risk-profile" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" onclick="selectRiskProfile('defensive', this)">
                                 <div style="font-weight: 600; margin-bottom: 5px;">Defensivo</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Range: ±50%</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Max Pool: 10%</div>
                             </div>
-                            <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-primary); cursor: pointer;">
+                            <div class="risk-profile" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-primary); cursor: pointer;" onclick="selectRiskProfile('normal', this)">
                                 <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent-primary);">Normal</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Range: ±30%</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Max Pool: 20%</div>
                             </div>
-                            <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;">
+                            <div class="risk-profile" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" onclick="selectRiskProfile('aggressive', this)">
                                 <div style="font-weight: 600; margin-bottom: 5px;">Agressivo</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Range: ±15%</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Max Pool: 30%</div>
@@ -1615,11 +1772,11 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                         <div class="form-group">
                             <label class="form-label">Máx. por Pool (%)</label>
-                            <input type="text" class="form-input" value="20" />
+                            <input type="text" class="form-input" id="max-pool-percent" value="20" onchange="syncLimits()" />
                         </div>
                         <div class="form-group">
                             <label class="form-label">Máx. por Pool (USDT)</label>
-                            <input type="text" class="form-input" value="25,000" />
+                            <input type="text" class="form-input" id="max-pool-usdt" value="25086" onchange="syncLimitsFromUSDT()" />
                         </div>
                         <div class="form-group">
                             <label class="form-label">Máx. por Rede (%)</label>
@@ -1628,6 +1785,24 @@
                         <div class="form-group">
                             <label class="form-label">Máx. Pools Voláteis (%)</label>
                             <input type="text" class="form-input" value="30" />
+                        </div>
+                    </div>
+
+                    <h3 style="margin: 30px 0 20px;">Regras de Gas</h3>
+                    
+                    <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;">
+                            ⚠️ Sistema inteligente de gas ativo
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                            <div>
+                                <label style="font-size: 11px; color: var(--text-muted);">Gas Máximo (gwei)</label>
+                                <input type="text" class="form-input" value="50" style="padding: 8px;" />
+                            </div>
+                            <div>
+                                <label style="font-size: 11px; color: var(--text-muted);">Min Retorno vs Gas</label>
+                                <input type="text" class="form-input" value="3x" style="padding: 8px;" />
+                            </div>
                         </div>
                     </div>
 
@@ -1652,9 +1827,89 @@
                         </div>
                     </div>
 
-                    <button class="btn btn-primary" style="width: 100%; margin-top: 30px;">
+                    <button class="btn btn-primary" style="width: 100%; margin-top: 30px;" onclick="saveConfiguration()">
                         Salvar Configurações
                     </button>
+                </div>
+
+                <!-- Alert quando não puder operar -->
+                <div id="no-operate-alert" style="display: none; background: rgba(255, 51, 102, 0.1); border: 1px solid var(--accent-danger); border-radius: 8px; padding: 20px; margin-top: 20px;">
+                    <h3 style="color: var(--accent-danger); margin-bottom: 10px;">🚫 NÃO OPERAR AGORA</h3>
+                    <p style="color: var(--text-primary); margin-bottom: 10px;">Condições desfavoráveis detectadas:</p>
+                    <ul style="color: var(--text-secondary); margin-left: 20px;">
+                        <li>Gas muito alto (>50 gwei)</li>
+                        <li>Volatilidade extrema no mercado</li>
+                        <li>Baixo volume nas pools principais</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- FAVORITOS PAGE (NOVA) -->
+        <!-- ============================================ -->
+        <div id="favorites" class="page">
+            <div style="margin-bottom: 30px;">
+                <h1 style="color: var(--text-primary); margin-bottom: 10px;">⭐ Pools Favoritas</h1>
+                <p style="color: var(--text-secondary);">
+                    Suas pools marcadas para acompanhamento rápido • 
+                    <span style="color: var(--accent-primary);" class="favorites-count">0</span> pools favoritadas
+                </p>
+            </div>
+
+            <!-- Filtros Rápidos -->
+            <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                <button class="btn btn-primary" onclick="filterFavorites('all')">Todas (<span class="fav-count-all">0</span>)</button>
+                <button class="btn btn-secondary" onclick="filterFavorites('range')">Em Range (<span class="fav-count-range">0</span>)</button>
+                <button class="btn btn-secondary" onclick="filterFavorites('warning')">Atenção (<span class="fav-count-warning">0</span>)</button>
+                <button class="btn btn-secondary" onclick="filterFavorites('out')">Fora de Range (<span class="fav-count-out">0</span>)</button>
+                <div style="margin-left: auto;">
+                    <input type="text" placeholder="🔍 Buscar favoritas..." 
+                           style="padding: 8px 15px; background: var(--bg-secondary); 
+                                  border: 1px solid var(--border-color); border-radius: 20px;
+                                  color: var(--text-primary);" onkeyup="searchFavorites(this.value)">
+                </div>
+            </div>
+
+            <!-- Grid de Pools Favoritas -->
+            <div class="grid" id="favorites-grid">
+                <!-- Placeholder quando não há favoritos -->
+                <div id="no-favorites" style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
+                    <div style="font-size: 48px; margin-bottom: 20px;">⭐</div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 10px;">Nenhuma pool favoritada ainda</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                        Clique no ícone ⭐ em qualquer pool para adicionar aos favoritos
+                    </p>
+                    <button class="btn btn-primary" onclick="showPage('pools', document.querySelector('.tab:nth-child(2)'))">
+                        Ver Pools Recomendadas
+                    </button>
+                </div>
+            </div>
+
+            <!-- Estatísticas das Favoritas -->
+            <div class="favorites-stats" style="margin-top: 40px; display: none;">
+                <h2 style="color: var(--text-primary); margin-bottom: 20px;">📊 Resumo das Favoritas</h2>
+                <div class="info-grid">
+                    <div class="info-card">
+                        <div class="info-icon">💰</div>
+                        <div class="info-title">Capital Total</div>
+                        <div class="info-value" id="fav-total-capital">$0</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-icon">📈</div>
+                        <div class="info-title">APR Médio</div>
+                        <div class="info-value" style="color: var(--accent-success);" id="fav-avg-apr">0%</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-icon">⚡</div>
+                        <div class="info-title">Fees Hoje</div>
+                        <div class="info-value" id="fav-total-fees">$0</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-icon">🎯</div>
+                        <div class="info-title">Score Médio</div>
+                        <div class="info-value" id="fav-avg-score">0/100</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1901,6 +2156,9 @@
     </div>
 
     <script>
+        // Favorite pools storage (in real app, this would be in Supabase)
+        let favoritePools = JSON.parse(localStorage.getItem('favoritePools') || '[]');
+        
         function showPage(pageId, tabElement) {
             // Hide all pages
             document.querySelectorAll('.page').forEach(page => {
@@ -1915,9 +2173,14 @@
             // Show selected page
             document.getElementById(pageId).classList.add('active');
             
-            // Add active to clicked tab (Opção A)
+            // Add active to clicked tab
             if (tabElement) {
                 tabElement.classList.add('active');
+            }
+            
+            // Update favorites page if needed
+            if (pageId === 'favorites') {
+                updateFavoritesPage();
             }
         }
 
@@ -1927,6 +2190,272 @@
 
         function closeModal() {
             document.getElementById('modal').classList.remove('active');
+        }
+
+        // Toggle favorite function
+        async function toggleFavorite(button, poolAddress, poolName) {
+            button.classList.toggle('active');
+            
+            const isFavorite = button.classList.contains('active');
+            
+            if (isFavorite) {
+                // Add to favorites
+                favoritePools.push({
+                    address: poolAddress,
+                    name: poolName,
+                    addedAt: new Date().toISOString(),
+                    apr: Math.random() * 60 + 10, // Mock APR
+                    score: Math.floor(Math.random() * 20 + 80), // Mock score
+                    status: ['active', 'warning', 'danger'][Math.floor(Math.random() * 3)],
+                    capital: Math.floor(Math.random() * 30000 + 5000),
+                    fees24h: Math.floor(Math.random() * 500 + 50)
+                });
+                
+                // Animation
+                button.style.transform = 'scale(1.5)';
+                setTimeout(() => button.style.transform = 'scale(1)', 300);
+                
+                // Show notification
+                showNotification(`✅ ${poolName} adicionada aos favoritos!`);
+            } else {
+                // Remove from favorites
+                favoritePools = favoritePools.filter(p => p.address !== poolAddress);
+                showNotification(`❌ ${poolName} removida dos favoritos`);
+            }
+            
+            // Save to localStorage (in real app, this would be API call to Supabase)
+            localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
+            
+            // Update counter
+            updateFavoritesCount();
+        }
+
+        function updateFavoritesCount() {
+            const count = favoritePools.length;
+            document.querySelectorAll('.favorites-count').forEach(el => {
+                el.textContent = count;
+            });
+            
+            // Update badge
+            const badge = document.querySelector('.favorites-badge');
+            if (count > 0) {
+                badge.style.display = 'inline-block';
+                badge.textContent = count;
+            } else {
+                badge.style.display = 'none';
+            }
+            
+            // Sync star buttons
+            document.querySelectorAll('.btn-star').forEach(btn => {
+                const poolAddress = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                if (poolAddress && favoritePools.some(p => p.address === poolAddress)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
+        function updateFavoritesPage() {
+            const grid = document.getElementById('favorites-grid');
+            const noFav = document.getElementById('no-favorites');
+            const stats = document.querySelector('.favorites-stats');
+            
+            if (favoritePools.length === 0) {
+                // Show placeholder
+                grid.innerHTML = `
+                    <div id="no-favorites" style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
+                        <div style="font-size: 48px; margin-bottom: 20px;">⭐</div>
+                        <h3 style="color: var(--text-primary); margin-bottom: 10px;">Nenhuma pool favoritada ainda</h3>
+                        <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                            Clique no ícone ⭐ em qualquer pool para adicionar aos favoritos
+                        </p>
+                        <button class="btn btn-primary" onclick="showPage('pools', document.querySelector('.tab:nth-child(2)'))">
+                            Ver Pools Recomendadas
+                        </button>
+                    </div>
+                `;
+                stats.style.display = 'none';
+            } else {
+                // Show favorite pools
+                grid.innerHTML = favoritePools.map(pool => `
+                    <div class="pool-card favorite-card">
+                        <div class="favorite-ribbon">
+                            <span>⭐ Favorita</span>
+                        </div>
+                        <div class="pool-header">
+                            <h3 class="pool-title">${pool.name}</h3>
+                            <button class="btn-star active" onclick="toggleFavorite(this, '${pool.address}', '${pool.name}')">⭐</button>
+                        </div>
+                        <div class="performance-indicator">
+                            <div class="perf-bar" style="width: ${pool.score}%; background: var(--accent-success);"></div>
+                            <span class="perf-text">${pool.score}% Performance</span>
+                        </div>
+                        <div class="quick-metrics">
+                            <div class="metric">
+                                <span class="label">APR</span>
+                                <span class="value success">${pool.apr.toFixed(1)}%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="label">24h Fees</span>
+                                <span class="value">$${pool.fees24h}</span>
+                            </div>
+                            <div class="metric">
+                                <span class="label">Status</span>
+                                <span class="status-badge status-${pool.status}">
+                                    ${pool.status === 'active' ? 'Em Range' : pool.status === 'warning' ? 'Atenção' : 'Fora'}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="personal-note">
+                            <textarea placeholder="💭 Adicionar nota pessoal..." 
+                                      onchange="saveNote('${pool.address}', this.value)"
+                                      style="width: 100%; background: var(--bg-secondary); 
+                                             border: 1px solid var(--border-color); 
+                                             border-radius: 8px; padding: 8px; 
+                                             color: var(--text-primary); resize: none; min-height: 60px;
+                                             font-size: 12px; font-family: inherit;"></textarea>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-top: 15px;">
+                            <button class="btn btn-primary" style="flex: 1;">Ver Detalhes</button>
+                            <button class="btn btn-secondary" style="flex: 1;">Adicionar Capital</button>
+                        </div>
+                    </div>
+                `).join('');
+                
+                stats.style.display = 'block';
+                
+                // Update stats
+                const totalCapital = favoritePools.reduce((sum, p) => sum + p.capital, 0);
+                const avgAPR = favoritePools.reduce((sum, p) => sum + p.apr, 0) / favoritePools.length;
+                const totalFees = favoritePools.reduce((sum, p) => sum + p.fees24h, 0);
+                const avgScore = favoritePools.reduce((sum, p) => sum + p.score, 0) / favoritePools.length;
+                
+                document.getElementById('fav-total-capital').textContent = `$${totalCapital.toLocaleString()}`;
+                document.getElementById('fav-avg-apr').textContent = `${avgAPR.toFixed(1)}%`;
+                document.getElementById('fav-total-fees').textContent = `$${totalFees}`;
+                document.getElementById('fav-avg-score').textContent = `${Math.floor(avgScore)}/100`;
+            }
+            
+            // Update filter counts
+            const all = favoritePools.length;
+            const inRange = favoritePools.filter(p => p.status === 'active').length;
+            const warning = favoritePools.filter(p => p.status === 'warning').length;
+            const out = favoritePools.filter(p => p.status === 'danger').length;
+            
+            document.querySelector('.fav-count-all').textContent = all;
+            document.querySelector('.fav-count-range').textContent = inRange;
+            document.querySelector('.fav-count-warning').textContent = warning;
+            document.querySelector('.fav-count-out').textContent = out;
+        }
+
+        function filterFavorites(type) {
+            // Implementation for filtering favorites
+            console.log('Filtering favorites by:', type);
+        }
+
+        function searchFavorites(query) {
+            // Implementation for searching favorites
+            console.log('Searching favorites:', query);
+        }
+
+        function saveNote(poolAddress, note) {
+            // Save note to pool (in real app, this would be API call)
+            const pool = favoritePools.find(p => p.address === poolAddress);
+            if (pool) {
+                pool.note = note;
+                localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
+                showNotification('💾 Nota salva!');
+            }
+        }
+
+        function showNotification(message) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 130px;
+                right: 20px;
+                background: var(--bg-card);
+                border: 1px solid var(--border-color);
+                border-left: 3px solid var(--accent-primary);
+                padding: 15px 20px;
+                border-radius: 8px;
+                color: var(--text-primary);
+                z-index: 10000;
+                animation: slideIn 0.3s ease;
+                box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+            `;
+            notification.innerHTML = message;
+            document.body.appendChild(notification);
+            
+            // Remove after 3 seconds
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
+        }
+
+        // Configuration functions
+        function selectRiskProfile(profile, element) {
+            // Remove active state from all profiles
+            document.querySelectorAll('.risk-profile').forEach(el => {
+                el.style.border = '1px solid var(--border-color)';
+            });
+            
+            // Add active state to selected
+            element.style.border = '2px solid var(--accent-primary)';
+            
+            // Update limits based on profile
+            const limits = {
+                defensive: { maxPool: 10, range: 50 },
+                normal: { maxPool: 20, range: 30 },
+                aggressive: { maxPool: 30, range: 15 }
+            };
+            
+            document.getElementById('max-pool-percent').value = limits[profile].maxPool;
+            syncLimits();
+        }
+
+        function updateBankSettings() {
+            const totalBank = parseFloat(document.getElementById('total-bank').value) || 0;
+            localStorage.setItem('totalBank', totalBank);
+            syncLimits();
+        }
+
+        function syncLimits() {
+            const totalBank = parseFloat(document.getElementById('total-bank').value) || 0;
+            const maxPercent = parseFloat(document.getElementById('max-pool-percent').value) || 0;
+            const maxUSDT = (totalBank * maxPercent / 100).toFixed(0);
+            document.getElementById('max-pool-usdt').value = maxUSDT;
+        }
+
+        function syncLimitsFromUSDT() {
+            const totalBank = parseFloat(document.getElementById('total-bank').value) || 0;
+            const maxUSDT = parseFloat(document.getElementById('max-pool-usdt').value) || 0;
+            const maxPercent = ((maxUSDT / totalBank) * 100).toFixed(1);
+            document.getElementById('max-pool-percent').value = maxPercent;
+        }
+
+        function saveConfiguration() {
+            // Save all configuration to API
+            const config = {
+                totalBank: document.getElementById('total-bank').value,
+                maxPoolPercent: document.getElementById('max-pool-percent').value,
+                maxPoolUSDT: document.getElementById('max-pool-usdt').value,
+                // Add other fields...
+            };
+            
+            // In real app, this would be API call
+            localStorage.setItem('riskConfig', JSON.stringify(config));
+            showNotification('✅ Configurações salvas com sucesso!');
+        }
+
+        function generateReport() {
+            showNotification('📊 Gerando relatório...');
+            setTimeout(() => {
+                showNotification('✅ Relatório gerado! Fazendo download...');
+            }, 2000);
         }
 
         // Close modal when clicking outside
@@ -1954,6 +2483,12 @@
             } else {
                 gasIndicator.classList.add('gas-high');
             }
+            
+            // Check if should not operate
+            if (gasValue > 50) {
+                const alert = document.getElementById('no-operate-alert');
+                if (alert) alert.style.display = 'block';
+            }
         }, 3000);
 
         // Simulate real-time updates
@@ -1972,6 +2507,23 @@
                 }
             });
         }, 5000);
+
+        // Initialize favorites count on load
+        updateFavoritesCount();
+
+        // Add CSS animations
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOut {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>
