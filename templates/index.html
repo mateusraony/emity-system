@@ -1185,12 +1185,16 @@
                     <span style="color: var(--accent-success); font-size: 12px;">Acima da meta</span>
                 </div>
                 
-                <div class="card">
+                <!-- Score IA Geral agora dinâmico -->
+                <div class="card" id="ia-score-card">
                     <div class="card-header">
                         <span class="card-title">Score IA Geral</span>
+                        <span class="status-badge status-active" id="ia-score-label">Excelente</span>
                     </div>
-                    <div class="card-value">88/100</div>
-                    <span style="color: var(--text-secondary); font-size: 11px;">Excelente</span>
+                    <div class="card-value" id="ia-score-value">88/100</div>
+                    <span style="color: var(--text-secondary); font-size: 11px;" id="ia-score-subtitle">
+                        Leitura combinada de perfil de risco, gas e saúde das pools favoritas.
+                    </span>
                 </div>
             </div>
 
@@ -1227,6 +1231,24 @@
                     <div class="info-icon">🎯</div>
                     <div class="info-title">Acerto</div>
                     <div class="info-value">87%</div>
+                </div>
+            </div>
+
+            <!-- Resumo de Inteligência IA -->
+            <div class="card" id="ia-summary-card" style="margin-bottom: 30px;">
+                <div class="card-header">
+                    <span class="card-title">Resumo de Inteligência IA</span>
+                </div>
+                <div id="ia-summary-main" style="font-size: 13px; color: var(--text-primary); margin-bottom: 8px;">
+                    A IA está analisando sua configuração de risco, favoritas e condições de gas para gerar recomendações.
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.6;">
+                    <div id="ia-summary-risk">• Perfil de risco atual: Normal. Favoritas ainda não configuradas.</div>
+                    <div id="ia-summary-gas">• Gas estimado: 12 gwei. Ambiente neutro para operar.</div>
+                    <div id="ia-summary-prob">• Probabilidade de cenário favorável (próx. 24h): 80% (estimativa qualitativa da IA).</div>
+                    <div id="ia-summary-actions" style="margin-top: 6px; color: var(--accent-primary);">
+                        Ação sugerida: manter as pools atuais e evitar movimentos grandes enquanto a base de dados ainda é limitada.
+                    </div>
                 </div>
             </div>
 
@@ -1343,7 +1365,11 @@
                     </div>
                     <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
                         <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
-                        <div style="font-size: 13px; color: var(--text-primary);">Pool com excelente volume e baixa volatilidade. Range otimizado para capturar 85% do fluxo esperado nos próximos 7 dias.</div>
+                        <div style="font-size: 13px; color: var(--text-primary);">
+                            Pool com excelente volume e baixa volatilidade relativa. Range atual cobre ~85% do fluxo esperado em 7 dias.
+                            A IA considera esta posição adequada para perfil Normal/Defensivo, com foco em geração de fees consistente e
+                            risco moderado de IL.
+                        </div>
                     </div>
                     <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
                         Ver Detalhes Completos
@@ -1398,7 +1424,10 @@
                     </div>
                     <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
                         <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
-                        <div style="font-size: 13px; color: var(--text-primary);">Alta volatilidade com potencial de fees elevadas. Requer monitoramento ativo.</div>
+                        <div style="font-size: 13px; color: var(--text-primary);">
+                            Perfil mais agressivo: volatilidade alta, mas com forte geração potencial de fees. Ideal para parte menor da banca,
+                            respeitando limites de exposição em ativos voláteis e exigindo monitoramento mais frequente do range.
+                        </div>
                     </div>
                     <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
                         Ver Detalhes
@@ -1453,7 +1482,10 @@
                     </div>
                     <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
                         <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
-                        <div style="font-size: 13px; color: var(--text-primary);">Pool estável ideal para preservação de capital. IL praticamente zero.</div>
+                        <div style="font-size: 13px; color: var(--text-primary);">
+                            Pool estável para preservação de capital e suavização da curva de P&L. IL praticamente nula, mas APR menor.
+                            Indicada para compor base defensiva da estratégia, principalmente em momentos de maior incerteza no mercado.
+                        </div>
                     </div>
                     <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
                         Ver Detalhes
@@ -2076,7 +2108,7 @@
                             <td><span class="status-badge status-warning">Rebalance</span></td>
                             <td>$18,500</td>
                             <td>-</td>
-                            <td>Range ajustado para alta volatilidade</td>
+                            <td>Range ajustado para alta volatilidade detectada em WBTC.</td>
                         </tr>
                         <tr>
                             <td>27/11 10:15</td>
@@ -2092,7 +2124,7 @@
                             <td><span class="status-badge status-active">Entrada</span></td>
                             <td>$15,000</td>
                             <td>-</td>
-                            <td>Score 95, melhor oportunidade</td>
+                            <td>Score 95, melhor combinação de volume, TVL e estabilidade para entrada.</td>
                         </tr>
                         <tr>
                             <td>26/11 16:45</td>
@@ -2108,7 +2140,7 @@
                             <td><span class="status-badge status-danger">Saída</span></td>
                             <td>$8,200</td>
                             <td style="color: var(--accent-danger);">-$320</td>
-                            <td>Volume caiu 70%, não vale manter</td>
+                            <td>Volume caiu 70% e risco de IL aumentou; IA recomendou encerrar.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -2158,7 +2190,10 @@
     <script>
         // Favorite pools storage (in real app, this would be in Supabase)
         let favoritePools = JSON.parse(localStorage.getItem('favoritePools') || '[]');
-        
+        // Estado da IA
+        let currentRiskProfile = 'normal';
+        let currentGasValue = 12;
+
         function showPage(pageId, tabElement) {
             // Hide all pages
             document.querySelectorAll('.page').forEach(page => {
@@ -2233,6 +2268,9 @@
             if (document.getElementById('favorites').classList.contains('active')) {
                 updateFavoritesPage();
             }
+
+            // Atualiza leitura da IA
+            updateIASummary();
         }
 
         function updateFavoritesCount() {
@@ -2419,6 +2457,9 @@
             updateFavoritesPage();
 
             showNotification(`❌ ${poolName} removida dos favoritos`);
+
+            // Atualiza leitura da IA
+            updateIASummary();
         }
 
         function showNotification(message) {
@@ -2448,11 +2489,137 @@
             }, 3000);
         }
 
+        // IA – cálculo de score e resumo
+        function updateIASummary() {
+            const totalFav = favoritePools.length;
+            const activeFav = favoritePools.filter(p => p.status === 'active').length;
+            const warningFav = favoritePools.filter(p => p.status === 'warning').length;
+            const dangerFav = favoritePools.filter(p => p.status === 'danger').length;
+
+            // Base de risco por perfil
+            let riskBaseScore = 80;
+            if (currentRiskProfile === 'defensive') riskBaseScore = 88;
+            else if (currentRiskProfile === 'aggressive') riskBaseScore = 72;
+
+            // Saúde das favoritas
+            let favScore = 80;
+            if (totalFav > 0) {
+                const health = (activeFav - dangerFav) / totalFav; // [-1, 1]
+                const clamped = Math.max(-1, Math.min(1, health));
+                favScore = Math.round(60 + 40 * clamped); // 20–100
+            }
+
+            // Impacto do gas
+            let gasScore = 80;
+            if (currentGasValue <= 15) gasScore = 90;
+            else if (currentGasValue <= 30) gasScore = 80;
+            else if (currentGasValue <= 50) gasScore = 65;
+            else gasScore = 45;
+
+            const globalScore = Math.max(0, Math.min(100, Math.round(
+                riskBaseScore * 0.4 +
+                favScore * 0.4 +
+                gasScore * 0.2
+            )));
+
+            let label = 'Excelente';
+            if (globalScore < 55) label = 'Crítico';
+            else if (globalScore < 70) label = 'Moderado';
+            else if (globalScore < 85) label = 'Bom';
+
+            const riskMap = {
+                defensive: 'Defensivo',
+                normal: 'Normal',
+                aggressive: 'Agressivo'
+            };
+            const riskText = riskMap[currentRiskProfile] || 'Normal';
+
+            let gasImpact = 'Neutro';
+            if (currentGasValue <= 15) gasImpact = 'Muito favorável para operar';
+            else if (currentGasValue <= 30) gasImpact = 'Ok para operar, sem grandes restrições';
+            else if (currentGasValue <= 50) gasImpact = 'Começa a pesar no retorno das pools';
+            else gasImpact = 'Desfavorável, evite movimentos desnecessários';
+
+            let action = '';
+            if (globalScore < 55 || dangerFav > 0) {
+                action = 'Priorize proteção: evite novas posições e considere reduzir exposição em pools fora de range ou muito voláteis.';
+            } else if (warningFav > 0) {
+                action = 'Monitore de perto as pools em atenção e avalie rebalancear ranges antes de novas alocações.';
+            } else if (globalScore >= 85 && gasScore >= 80) {
+                action = 'Cenário saudável: é possível considerar novas entradas dentro dos limites de risco definidos.';
+            } else {
+                action = 'Mantenha as posições atuais, aguardando melhor relação entre gas, volatilidade e fees.';
+            }
+
+            const mainEl = document.getElementById('ia-summary-main');
+            const riskEl = document.getElementById('ia-summary-risk');
+            const gasEl = document.getElementById('ia-summary-gas');
+            const probEl = document.getElementById('ia-summary-prob');
+            const actionsEl = document.getElementById('ia-summary-actions');
+            const scoreValueEl = document.getElementById('ia-score-value');
+            const scoreLabelEl = document.getElementById('ia-score-label');
+            const scoreSubtitleEl = document.getElementById('ia-score-subtitle');
+            const iaStatusEl = document.getElementById('ia-status');
+
+            if (scoreValueEl) scoreValueEl.textContent = globalScore + '/100';
+
+            if (scoreLabelEl) {
+                scoreLabelEl.textContent = label;
+                scoreLabelEl.classList.remove('status-active', 'status-warning', 'status-danger');
+                if (label === 'Excelente' || label === 'Bom') {
+                    scoreLabelEl.classList.add('status-active');
+                } else if (label === 'Moderado') {
+                    scoreLabelEl.classList.add('status-warning');
+                } else {
+                    scoreLabelEl.classList.add('status-danger');
+                }
+            }
+
+            if (scoreSubtitleEl) {
+                const favPhrase = totalFav
+                    ? `${totalFav} pools favoritas monitoradas`
+                    : 'nenhuma pool favorita monitorada ainda';
+                scoreSubtitleEl.textContent = `Leitura combinada de perfil ${riskText}, gas atual e ${favPhrase}.`;
+            }
+
+            if (mainEl) {
+                mainEl.textContent = `A IA avalia o sistema como ${label} neste momento, com score ${globalScore}/100.`;
+            }
+
+            if (riskEl) {
+                riskEl.textContent = `• Perfil de risco atual: ${riskText}. Favoritas: ${activeFav} em range, ${warningFav} em atenção, ${dangerFav} fora.`;
+            }
+
+            if (gasEl) {
+                gasEl.textContent = `• Gas estimado: ${currentGasValue} gwei. ${gasImpact}.`;
+            }
+
+            if (probEl) {
+                probEl.textContent = `• Probabilidade de cenário favorável (próx. 24h): ${globalScore}% (estimativa qualitativa da IA).`;
+            }
+
+            if (actionsEl) {
+                actionsEl.textContent = `Ação sugerida: ${action}`;
+            }
+
+            if (iaStatusEl) {
+                iaStatusEl.classList.remove('ia-online', 'ia-offline');
+                if (globalScore < 55) {
+                    iaStatusEl.classList.add('ia-offline');
+                    iaStatusEl.title = 'IA em modo de alerta: ambiente ruim para novas posições.';
+                } else {
+                    iaStatusEl.classList.add('ia-online');
+                    iaStatusEl.title = `IA operando normalmente: cenário ${label.toLowerCase()}.`;
+                }
+            }
+        }
+
         // Configuration functions
         function selectRiskProfile(profile, element) {
             // Remove active state from all profiles
             document.querySelectorAll('.risk-profile').forEach(el => {
                 el.style.border = '1px solid var(--border-color)';
+                el.style.color = 'inherit';
             });
             
             // Add active state to selected
@@ -2467,12 +2634,16 @@
             
             document.getElementById('max-pool-percent').value = limits[profile].maxPool;
             syncLimits();
+
+            currentRiskProfile = profile;
+            updateIASummary();
         }
 
         function updateBankSettings() {
             const totalBank = parseFloat(document.getElementById('total-bank').value) || 0;
             localStorage.setItem('totalBank', totalBank);
             syncLimits();
+            updateIASummary();
         }
 
         function syncLimits() {
@@ -2501,6 +2672,7 @@
             // In real app, this would be API call
             localStorage.setItem('riskConfig', JSON.stringify(config));
             showNotification('✅ Configurações salvas com sucesso!');
+            updateIASummary();
         }
 
         function generateReport() {
@@ -2523,6 +2695,7 @@
             if (!gasIndicator) return;
 
             const gasValue = Math.floor(Math.random() * 50) + 5;
+            currentGasValue = gasValue;
             
             gasIndicator.textContent = `Gas: ${gasValue} gwei`;
             
@@ -2547,6 +2720,8 @@
                     alert.style.display = 'none';
                 }
             }
+
+            updateIASummary();
         }, 3000);
 
         // Simulate real-time updates
@@ -2569,19 +2744,20 @@
 
         // Initialize favorites count on load
         updateFavoritesCount();
+        updateIASummary();
 
         // Add CSS animations
         const style = document.createElement('style');
         style.textContent = `
-            @keyframes slideIn {
-                from { transform: translateX(100%); opacity: 0; }
-                to { transform: translateX(0); opacity: 1; }
-            }
-            @keyframes slideOut {
-                from { transform: translateX(0); opacity: 1; }
-                to { transform: translateX(100%); opacity: 0; }
-            }
-        `;
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideOut {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(20px); }
+}
+`;
         document.head.appendChild(style);
     </script>
 </body>
