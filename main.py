@@ -114,6 +114,14 @@ class FavoritePoolRequest(BaseModel):
     is_custom: bool = False
 
 
+# Novo modelo para adicionar favoritos (compatível com frontend)
+class FavoriteAddRequest(BaseModel):
+    pool_address: str
+    pool_name: Optional[str] = None
+    notes: Optional[str] = None
+    performance_score: Optional[float] = None
+
+
 # --- Modelos da Fase 2 (config / risco) ---
 
 class ConfigUpdate(BaseModel):
@@ -294,7 +302,7 @@ async def trigger_scan(background_tasks: BackgroundTasks):
 
 
 # ============================================================
-# POOLS CUSTOM / FAVORITOS (Fase 1)
+# POOLS CUSTOM / FAVORITOS (Fase 1 + NOVOS ENDPOINTS)
 # ============================================================
 
 @app.post("/api/custom-pool")
@@ -468,6 +476,156 @@ async def toggle_favorite(favorite_data: FavoritePoolRequest):
 
     except Exception as e:
         logger.error(f"Erro ao alternar favorito: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# NOVOS ENDPOINTS DE FAVORITOS (FASE 2 - FINALIZANDO)
+# ============================================================
+
+@app.post("/api/favorites/add")
+async def add_to_favorites(favorite_data: FavoriteAddRequest):
+    """Adiciona pool aos favoritos (endpoint novo para compatibilidade com frontend)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
+    try:
+        address = favorite_data.pool_address.lower()
+        
+        # Verificar se já existe
+        existing = (
+            supabase.table("favorite_pools")
+            .select("*")
+            .eq("pool_address", address)
+            .execute()
+        )
+        
+        data = {
+            "pool_address": address,
+            "pool_name": favorite_data.pool_name,
+            "user_id": "default_user",  # para multi-usuário no futuro
+            "network": "arbitrum",
+            "notes": favorite_data.notes or "",
+            "performance_score": favorite_data.performance_score,
+            "added_at": datetime.utcnow().isoformat(),
+            "last_checked": datetime.utcnow().isoformat(),
+            "is_active": True,
+            "metadata": json.dumps({
+                "source": "web_interface",
+                "version": "2.0"
+            })
+        }
+        
+        if existing.data:
+            # Atualizar existente
+            result = supabase.table("favorite_pools").update(data).eq(
+                "pool_address", address
+            ).execute()
+        else:
+            # Inserir novo
+            result = supabase.table("favorite_pools").insert(data).execute()
+        
+        return {
+            "success": True,
+            "message": f"Pool {favorite_data.pool_name or address} adicionada aos favoritos",
+            "data": result.data[0] if result.data else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao adicionar favorito: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/favorites/remove/{pool_address}")
+async def remove_from_favorites(pool_address: str):
+    """Remove pool dos favoritos (endpoint novo para compatibilidade com frontend)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
+    try:
+        address = pool_address.lower()
+        
+        result = supabase.table("favorite_pools").delete().eq(
+            "pool_address", address
+        ).execute()
+        
+        if result.data:
+            return {
+                "success": True,
+                "message": f"Pool {address} removida dos favoritos"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Pool não encontrada nos favoritos"
+            }
+            
+    except Exception as e:
+        logger.error(f"Erro ao remover favorito: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/favorites/list")
+async def list_favorites():
+    """Lista todas as pools favoritas com detalhes completos."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+
+    try:
+        # Buscar favoritos
+        favorites = supabase.table("favorite_pools").select("*").execute()
+        
+        if not favorites.data:
+            return {
+                "success": True,
+                "count": 0,
+                "favorites": []
+            }
+        
+        # Enriquecer com dados das pools
+        enriched_favorites = []
+        for fav in favorites.data:
+            # Buscar dados da pool
+            pool_result = (
+                supabase.table("pools")
+                .select("*")
+                .eq("address", fav["pool_address"])
+                .execute()
+            )
+            
+            if pool_result.data:
+                pool = pool_result.data[0]
+                # Combinar dados
+                enriched_fav = {
+                    **fav,
+                    "pool_details": {
+                        "pair": f"{pool.get('token0_symbol', 'TOKEN0')}/{pool.get('token1_symbol', 'TOKEN1')}",
+                        "fee_tier": pool.get("fee_tier", 0),
+                        "tvl_usd": pool.get("tvl_usd", 0),
+                        "volume_24h": pool.get("volume_24h", 0),
+                        "fee_apr": pool.get("fee_apr", 0),
+                        "score": pool.get("score", 0),
+                        "il_7d": pool.get("il_7d", 0),
+                        "recommendation": pool.get("recommendation", ""),
+                    }
+                }
+            else:
+                # Pool não encontrada na tabela principal
+                enriched_fav = {
+                    **fav,
+                    "pool_details": None
+                }
+            
+            enriched_favorites.append(enriched_fav)
+        
+        return {
+            "success": True,
+            "count": len(enriched_favorites),
+            "favorites": enriched_favorites
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao listar favoritos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1053,9 +1211,10 @@ async def startup_event():
     if supabase:
         try:
             supabase.table("favorite_pools").select("pool_address").limit(1).execute()
+            logger.info("✅ Tabela 'favorite_pools' verificada")
         except Exception:
             logger.warning(
-                "⚠️ Tabela 'favorite_pools' não existe. Crie no Supabase com: pool_address, is_custom, min_range, max_range, capital, added_at"
+                "⚠️ Tabela 'favorite_pools' não existe. Crie no Supabase com os campos corretos"
             )
 
     # log da config
