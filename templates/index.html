@@ -2228,6 +2228,11 @@
             
             // Update counter
             updateFavoritesCount();
+
+            // Se a aba de favoritos estiver aberta, atualiza a grade
+            if (document.getElementById('favorites').classList.contains('active')) {
+                updateFavoritesPage();
+            }
         }
 
         function updateFavoritesCount() {
@@ -2238,16 +2243,20 @@
             
             // Update badge
             const badge = document.querySelector('.favorites-badge');
-            if (count > 0) {
-                badge.style.display = 'inline-block';
-                badge.textContent = count;
-            } else {
-                badge.style.display = 'none';
+            if (badge) {
+                if (count > 0) {
+                    badge.style.display = 'inline-block';
+                    badge.textContent = count;
+                } else {
+                    badge.style.display = 'none';
+                }
             }
             
             // Sync star buttons
             document.querySelectorAll('.btn-star').forEach(btn => {
-                const poolAddress = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                const onclickAttr = btn.getAttribute('onclick') || '';
+                const match = onclickAttr.match(/'([^']+)'/);
+                const poolAddress = match ? match[1] : null;
                 if (poolAddress && favoritePools.some(p => p.address === poolAddress)) {
                     btn.classList.add('active');
                 } else {
@@ -2258,10 +2267,9 @@
 
         function updateFavoritesPage() {
             const grid = document.getElementById('favorites-grid');
-            const noFav = document.getElementById('no-favorites');
             const stats = document.querySelector('.favorites-stats');
             
-            if (favoritePools.length === 0) {
+            if (!favoritePools.length) {
                 // Show placeholder
                 grid.innerHTML = `
                     <div id="no-favorites" style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
@@ -2275,11 +2283,11 @@
                         </button>
                     </div>
                 `;
-                stats.style.display = 'none';
+                if (stats) stats.style.display = 'none';
             } else {
                 // Show favorite pools
                 grid.innerHTML = favoritePools.map(pool => `
-                    <div class="pool-card favorite-card">
+                    <div class="pool-card favorite-card" data-status="${pool.status}" data-name="${pool.name.toLowerCase()}">
                         <div class="favorite-ribbon">
                             <span>⭐ Favorita</span>
                         </div>
@@ -2314,22 +2322,23 @@
                                              border: 1px solid var(--border-color); 
                                              border-radius: 8px; padding: 8px; 
                                              color: var(--text-primary); resize: none; min-height: 60px;
-                                             font-size: 12px; font-family: inherit;"></textarea>
+                                             font-size: 12px; font-family: inherit;">${pool.note || ''}</textarea>
                         </div>
                         <div style="display: flex; gap: 10px; margin-top: 15px;">
                             <button class="btn btn-primary" style="flex: 1;">Ver Detalhes</button>
                             <button class="btn btn-secondary" style="flex: 1;">Adicionar Capital</button>
+                            <button class="btn btn-danger" style="flex: 0 0 auto; padding: 0 12px;" onclick="event.stopPropagation(); removeFavorite('${pool.address}', '${pool.name}')">🗑</button>
                         </div>
                     </div>
                 `).join('');
                 
-                stats.style.display = 'block';
+                if (stats) stats.style.display = 'block';
                 
                 // Update stats
-                const totalCapital = favoritePools.reduce((sum, p) => sum + p.capital, 0);
-                const avgAPR = favoritePools.reduce((sum, p) => sum + p.apr, 0) / favoritePools.length;
-                const totalFees = favoritePools.reduce((sum, p) => sum + p.fees24h, 0);
-                const avgScore = favoritePools.reduce((sum, p) => sum + p.score, 0) / favoritePools.length;
+                const totalCapital = favoritePools.reduce((sum, p) => sum + (p.capital || 0), 0);
+                const avgAPR = favoritePools.reduce((sum, p) => sum + (p.apr || 0), 0) / favoritePools.length;
+                const totalFees = favoritePools.reduce((sum, p) => sum + (p.fees24h || 0), 0);
+                const avgScore = favoritePools.reduce((sum, p) => sum + (p.score || 0), 0) / favoritePools.length;
                 
                 document.getElementById('fav-total-capital').textContent = `$${totalCapital.toLocaleString()}`;
                 document.getElementById('fav-avg-apr').textContent = `${avgAPR.toFixed(1)}%`;
@@ -2350,13 +2359,44 @@
         }
 
         function filterFavorites(type) {
-            // Implementation for filtering favorites
-            console.log('Filtering favorites by:', type);
+            const grid = document.getElementById('favorites-grid');
+            if (!grid) return;
+            const cards = grid.querySelectorAll('.pool-card.favorite-card');
+            if (!cards.length) return;
+
+            cards.forEach(card => {
+                const status = card.getAttribute('data-status');
+                let show = false;
+
+                if (type === 'all') {
+                    show = true;
+                } else if (type === 'range' && status === 'active') {
+                    show = true;
+                } else if (type === 'warning' && status === 'warning') {
+                    show = true;
+                } else if (type === 'out' && status === 'danger') {
+                    show = true;
+                }
+
+                card.style.display = show ? '' : 'none';
+            });
         }
 
         function searchFavorites(query) {
-            // Implementation for searching favorites
-            console.log('Searching favorites:', query);
+            const grid = document.getElementById('favorites-grid');
+            if (!grid) return;
+            const cards = grid.querySelectorAll('.pool-card.favorite-card');
+            if (!cards.length) return;
+
+            const q = (query || '').toLowerCase().trim();
+
+            // Se a busca estiver vazia, não mexe no que o filtro já definiu
+            if (!q) return;
+
+            cards.forEach(card => {
+                const name = (card.getAttribute('data-name') || '').toLowerCase();
+                card.style.display = name.includes(q) ? '' : 'none';
+            });
         }
 
         function saveNote(poolAddress, note) {
@@ -2367,6 +2407,18 @@
                 localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
                 showNotification('💾 Nota salva!');
             }
+        }
+
+        function removeFavorite(poolAddress, poolName) {
+            // Remove pool from favorites array
+            favoritePools = favoritePools.filter(p => p.address !== poolAddress);
+            localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
+
+            // Atualiza contadores e grid
+            updateFavoritesCount();
+            updateFavoritesPage();
+
+            showNotification(`❌ ${poolName} removida dos favoritos`);
         }
 
         function showNotification(message) {
@@ -2433,7 +2485,7 @@
         function syncLimitsFromUSDT() {
             const totalBank = parseFloat(document.getElementById('total-bank').value) || 0;
             const maxUSDT = parseFloat(document.getElementById('max-pool-usdt').value) || 0;
-            const maxPercent = ((maxUSDT / totalBank) * 100).toFixed(1);
+            const maxPercent = totalBank ? ((maxUSDT / totalBank) * 100).toFixed(1) : 0;
             document.getElementById('max-pool-percent').value = maxPercent;
         }
 
@@ -2468,6 +2520,8 @@
         // Simulate gas price changes
         setInterval(() => {
             const gasIndicator = document.querySelector('.gas-indicator');
+            if (!gasIndicator) return;
+
             const gasValue = Math.floor(Math.random() * 50) + 5;
             
             gasIndicator.textContent = `Gas: ${gasValue} gwei`;
@@ -2485,9 +2539,13 @@
             }
             
             // Check if should not operate
-            if (gasValue > 50) {
-                const alert = document.getElementById('no-operate-alert');
-                if (alert) alert.style.display = 'block';
+            const alert = document.getElementById('no-operate-alert');
+            if (alert) {
+                if (gasValue > 50) {
+                    alert.style.display = 'block';
+                } else {
+                    alert.style.display = 'none';
+                }
             }
         }, 3000);
 
@@ -2498,6 +2556,7 @@
             values.forEach(value => {
                 if (value.textContent.includes('$')) {
                     const current = parseFloat(value.textContent.replace(/[$,]/g, ''));
+                    if (!current) return;
                     const change = (Math.random() - 0.5) * current * 0.001;
                     const newValue = current + change;
                     value.textContent = '$' + newValue.toLocaleString('en-US', {
