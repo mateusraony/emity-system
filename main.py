@@ -1,13 +1,12 @@
 """EMITY System - API Principal
-Fase 2: Liquidity Pool Intelligence + Motor de Risco
-Combinação dos módulos da Fase 1 (scanner/análises) com Fase 2 (risk engine/config)
+Fase 3: Liquidity Pool Intelligence + Motor de Risco + Automação/Telegram
 """
 
 import os
 import json
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
@@ -22,6 +21,7 @@ from database import EMITYDatabase
 from scanner import run_scanner, add_custom_pool
 from analyzer import analyze_all_pools, PoolAnalyzer
 from risk_engine import RiskEngine
+from telegram_bot import telegram_bot
 
 # ============================================================
 # Logging
@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="EMITY System - Liquidity Pool Intelligence",
-    description="Sistema institucional de análise de pools + motor de risco",
-    version="2.0.0",
+    description="Sistema institucional de análise de pools + motor de risco + automação",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -140,6 +140,21 @@ class ConfigUpdate(BaseModel):
 class PositionSizeRequest(BaseModel):
     pool_address: str
     override_pct: Optional[float] = None
+
+
+# --- Modelos da Fase 3 (Telegram) ---
+
+class TelegramConfig(BaseModel):
+    """Configuração do bot Telegram"""
+    enabled: bool
+    bot_token: Optional[str] = None
+    chat_id: Optional[str] = None
+
+
+class AlertTest(BaseModel):
+    """Teste de alerta"""
+    message: Optional[str] = None
+    alert_type: str = "test"
 
 
 # ============================================================
@@ -246,6 +261,7 @@ async def health_check():
     components_status = {
         "database": db is not None,
         "supabase_client": supabase is not None,
+        "telegram_bot": telegram_bot.enabled
     }
 
     all_healthy = all(components_status.values())
@@ -257,6 +273,169 @@ async def health_check():
         "version": app.version,
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+
+# ============================================================
+# TELEGRAM / ALERTAS (Fase 3 - NOVO)
+# ============================================================
+
+@app.post("/api/telegram/enable")
+async def enable_telegram(config: TelegramConfig):
+    """Ativa/desativa bot do Telegram"""
+    try:
+        # Atualizar configuração
+        telegram_bot.enabled = config.enabled
+        
+        if config.bot_token:
+            telegram_bot.token = config.bot_token
+            telegram_bot.base_url = f"https://api.telegram.org/bot{config.bot_token}"
+            
+        if config.chat_id:
+            telegram_bot.chat_id = config.chat_id
+            
+        # Salvar no banco
+        if supabase:
+            supabase.table("config").upsert({
+                "key": "telegram_enabled",
+                "value": str(config.enabled),
+                "updated_at": datetime.utcnow().isoformat()
+            }).execute()
+            
+        return {
+            "success": True,
+            "enabled": telegram_bot.enabled,
+            "message": f"Telegram {'ativado' if telegram_bot.enabled else 'desativado'}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao configurar Telegram: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/telegram/status")
+async def telegram_status():
+    """Retorna status do bot Telegram"""
+    try:
+        # Contar alertas ativos
+        alerts_count = 0
+        if supabase:
+            result = supabase.table("alerts").select("id").execute()
+            alerts_count = len(result.data or [])
+            
+        return {
+            "enabled": telegram_bot.enabled,
+            "bot_token_configured": bool(telegram_bot.token),
+            "chat_id_configured": bool(telegram_bot.chat_id),
+            "dashboard_url": telegram_bot.dashboard_url,
+            "total_alerts_sent": alerts_count,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao buscar status: {e}")
+        return {
+            "enabled": False,
+            "error": str(e)
+        }
+
+
+@app.post("/api/telegram/test")
+async def test_telegram_alert(test_data: AlertTest):
+    """Envia alerta de teste para Telegram"""
+    try:
+        if not telegram_bot.enabled:
+            raise HTTPException(status_code=400, detail="Telegram desabilitado")
+            
+        # Enviar mensagem de teste
+        success = await telegram_bot.send_test_message()
+        
+        if success:
+            # Registrar no banco
+            if supabase:
+                supabase.table("alerts").insert({
+                    "type": "TEST",
+                    "title": "Teste de Alerta",
+                    "message": test_data.message or "Teste executado com sucesso",
+                    "severity": "info",
+                    "created_at": datetime.utcnow().isoformat()
+                }).execute()
+                
+            return {
+                "success": True,
+                "message": "Alerta de teste enviado com sucesso"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Falha ao enviar alerta")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao enviar teste: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts/history")
+async def get_alerts_history(
+    limit: int = Query(50, ge=1, le=200),
+    alert_type: Optional[str] = None
+):
+    """Retorna histórico de alertas enviados"""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+        
+    try:
+        query = supabase.table("alerts").select("*")
+        
+        if alert_type:
+            query = query.eq("type", alert_type)
+            
+        query = query.order("created_at", desc=True).limit(limit)
+        result = query.execute()
+        
+        alerts = result.data or []
+        
+        # Agrupar por tipo
+        alerts_by_type = {}
+        for alert in alerts:
+            alert_type = alert.get("type", "UNKNOWN")
+            if alert_type not in alerts_by_type:
+                alerts_by_type[alert_type] = []
+            alerts_by_type[alert_type].append(alert)
+            
+        return {
+            "success": True,
+            "total": len(alerts),
+            "alerts": alerts,
+            "by_type": alerts_by_type,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao buscar histórico: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/alerts/clear")
+async def clear_alerts_history():
+    """Limpa histórico de alertas antigos (mantém últimos 7 dias)"""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase não disponível")
+        
+    try:
+        # Deletar alertas com mais de 7 dias
+        cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        
+        result = supabase.table("alerts").delete().lt("created_at", cutoff_date).execute()
+        
+        return {
+            "success": True,
+            "deleted": len(result.data or []),
+            "message": "Histórico de alertas limpo (mantidos últimos 7 dias)"
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao limpar histórico: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -1204,7 +1383,7 @@ async def get_alerts(limit: int = Query(20, ge=1, le=100)):
 async def startup_event():
     """Executado ao iniciar a aplicação."""
     logger.info("=" * 60)
-    logger.info("🚀 EMITY System iniciando - FASE 2 (LP + Risco)")
+    logger.info("🚀 EMITY System iniciando - FASE 3 (Automação + Telegram)")
     logger.info("API rodando...")
 
     # checar favorite_pools
@@ -1230,6 +1409,9 @@ async def startup_event():
                 )
         except Exception:
             pass
+
+    # Log do Telegram
+    logger.info(f"🤖 Telegram Bot: {'ATIVADO' if telegram_bot.enabled else 'DESATIVADO'}")
 
     # agendar scan inicial
     if supabase:
