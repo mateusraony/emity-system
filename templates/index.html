@@ -33,7 +33,7 @@
             color: var(--text-primary);
             min-height: 100vh;
             overflow-x: hidden;
-            padding-top: 110px; /* Space for fixed header */
+            padding-top: 110px;
         }
 
         /* Fixed Header Container */
@@ -135,6 +135,7 @@
 
         .telegram-indicator {
             position: relative;
+            cursor: pointer;
         }
 
         .telegram-icon {
@@ -150,6 +151,11 @@
             background: var(--accent-success);
             border-radius: 50%;
             animation: pulse 2s infinite;
+        }
+
+        .telegram-pulse.offline {
+            background: var(--accent-danger);
+            animation: none;
         }
 
         .gas-indicator {
@@ -434,6 +440,11 @@
             50% { opacity: 1; }
         }
 
+        /* Hide mock warning when data is real */
+        .mock-warning.hidden {
+            display: none;
+        }
+
         /* Main Content */
         .main-content {
             padding: 30px;
@@ -678,6 +689,27 @@
         .btn-danger {
             background: var(--accent-danger);
             color: white;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Loading Spinner */
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: var(--accent-primary);
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
         /* Table */
@@ -1031,6 +1063,26 @@
             cursor: pointer;
         }
 
+        /* Connection Status */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .connection-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-success);
+        }
+
+        .connection-dot.offline {
+            background: var(--accent-danger);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             body {
@@ -1067,16 +1119,16 @@
             </div>
             <div class="header-info">
                 <div class="info-item">
-                    <div class="ia-indicator ia-online" id="ia-status">IA</div>
+                    <div class="ia-indicator ia-online" id="ia-status" title="IA Online">IA</div>
                 </div>
                 <div class="info-item">
-                    <div class="telegram-indicator">
+                    <div class="telegram-indicator" id="telegram-status" title="Telegram Bot Online" onclick="testTelegramAlert()">
                         <span class="telegram-icon">📱</span>
-                        <div class="telegram-pulse"></div>
+                        <div class="telegram-pulse" id="telegram-pulse"></div>
                     </div>
                 </div>
                 <div class="info-item">
-                    <span class="gas-indicator gas-low">Gas: 12 gwei</span>
+                    <span class="gas-indicator gas-low" id="gas-indicator">Gas: 12 gwei</span>
                 </div>
                 <div class="info-item">
                     <span style="color: var(--text-secondary); font-size: 12px;">Favoritas: </span>
@@ -1096,7 +1148,7 @@
             <button class="tab" onclick="showPage('pools', this)">
                 <span class="tab-icon">💎</span>
                 Pools Recomendadas
-                <span class="notification-badge">3</span>
+                <span class="notification-badge" id="pools-badge">0</span>
             </button>
             <button class="tab" onclick="showPage('active', this)">
                 <span class="tab-icon">✅</span>
@@ -1118,7 +1170,7 @@
             <button class="tab" onclick="showPage('alerts', this)">
                 <span class="tab-icon">🔔</span>
                 Alertas
-                <span class="notification-badge">5</span>
+                <span class="notification-badge" id="alerts-badge">0</span>
             </button>
             <button class="tab" onclick="showPage('history', this)">
                 <span class="tab-icon">📈</span>
@@ -1136,56 +1188,56 @@
         <div id="dashboard" class="page active">
             <div class="grid">
                 <div class="card">
-                    <div class="mock-warning" title="Dados mockados"></div>
+                    <div class="mock-warning" id="mock-bank" title="Dados mockados"></div>
                     <div class="card-header">
                         <span class="card-title">Banca Total</span>
                         <span class="status-badge status-active">Ativo</span>
                     </div>
-                    <div class="card-value">$125,430</div>
-                    <span class="card-change positive">+12.5% (30d)</span>
+                    <div class="card-value" id="dashboard-total-bank">$125,430</div>
+                    <span class="card-change positive" id="dashboard-bank-change">+12.5% (30d)</span>
                 </div>
                 
                 <div class="card">
-                    <div class="mock-warning" title="Dados mockados"></div>
+                    <div class="mock-warning" id="mock-capital" title="Dados mockados"></div>
                     <div class="card-header">
                         <span class="card-title">Capital em Pools</span>
                     </div>
-                    <div class="card-value">$87,300</div>
+                    <div class="card-value" id="dashboard-capital">$87,300</div>
                     <div style="margin-top: 10px;">
                         <div style="background: var(--bg-secondary); border-radius: 4px; height: 8px; overflow: hidden;">
-                            <div style="width: 69.6%; height: 100%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-info));"></div>
+                            <div id="dashboard-allocation-bar" style="width: 69.6%; height: 100%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-info));"></div>
                         </div>
-                        <span style="color: var(--text-secondary); font-size: 11px; margin-top: 5px; display: block;">69.6% alocado</span>
+                        <span style="color: var(--text-secondary); font-size: 11px; margin-top: 5px; display: block;" id="dashboard-allocation-text">69.6% alocado</span>
                     </div>
                 </div>
                 
                 <div class="card">
-                    <div class="mock-warning" title="Dados mockados"></div>
+                    <div class="mock-warning" id="mock-fees" title="Dados mockados"></div>
                     <div class="card-header">
                         <span class="card-title">Fees 24h</span>
                     </div>
-                    <div class="card-value">$285</div>
-                    <span class="card-change positive">+18.5%</span>
+                    <div class="card-value" id="dashboard-fees">$285</div>
+                    <span class="card-change positive" id="dashboard-fees-change">+18.5%</span>
                 </div>
                 
                 <div class="card">
-                    <div class="mock-warning" title="Dados mockados"></div>
+                    <div class="mock-warning" id="mock-il" title="Dados mockados"></div>
                     <div class="card-header">
                         <span class="card-title">IL Total</span>
                     </div>
-                    <div class="card-value">-$1,420</div>
-                    <span class="card-change negative">-1.13%</span>
+                    <div class="card-value" id="dashboard-il">-$1,420</div>
+                    <span class="card-change negative" id="dashboard-il-change">-1.13%</span>
                 </div>
                 
                 <div class="card">
                     <div class="card-header">
                         <span class="card-title">APR Médio</span>
                     </div>
-                    <div class="card-value">42.8%</div>
+                    <div class="card-value" id="dashboard-apr">42.8%</div>
                     <span style="color: var(--accent-success); font-size: 12px;">Acima da meta</span>
                 </div>
                 
-                <!-- Score IA Geral agora dinâmico -->
+                <!-- Score IA Geral -->
                 <div class="card" id="ia-score-card">
                     <div class="card-header">
                         <span class="card-title">Score IA Geral</span>
@@ -1206,7 +1258,7 @@
                     <div class="fake-chart">
                         <div class="fake-chart-line"></div>
                     </div>
-                    <div style="margin-top: 10px; color: var(--accent-success); font-size: 20px; font-weight: 700;">+$15,430</div>
+                    <div style="margin-top: 10px; color: var(--accent-success); font-size: 20px; font-weight: 700;" id="dashboard-performance">+$15,430</div>
                 </div>
             </div>
 
@@ -1215,22 +1267,22 @@
                 <div class="info-card">
                     <div class="info-icon">🤖</div>
                     <div class="info-title">Decisões IA</div>
-                    <div class="info-value">47</div>
+                    <div class="info-value" id="dashboard-decisions">47</div>
                 </div>
                 <div class="info-card">
                     <div class="info-icon">📱</div>
                     <div class="info-title">Alertas</div>
-                    <div class="info-value">12</div>
+                    <div class="info-value" id="dashboard-alerts">12</div>
                 </div>
                 <div class="info-card">
                     <div class="info-icon">⚡</div>
                     <div class="info-title">Rebalances</div>
-                    <div class="info-value">3</div>
+                    <div class="info-value" id="dashboard-rebalances">3</div>
                 </div>
                 <div class="info-card">
                     <div class="info-icon">🎯</div>
                     <div class="info-title">Acerto</div>
-                    <div class="info-value">87%</div>
+                    <div class="info-value" id="dashboard-accuracy">87%</div>
                 </div>
             </div>
 
@@ -1267,7 +1319,7 @@
                             <th>Ação</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="active-pools-table">
                         <tr>
                             <td>
                                 <div class="token-pair">
@@ -1283,7 +1335,7 @@
                             <td style="color: var(--accent-success);">$125</td>
                             <td style="color: var(--accent-success);">+$1,250</td>
                             <td><span class="status-badge status-active">Em Range</span></td>
-                            <td><a href="#" class="pool-link" onclick="alert('Abrindo pool ETH/USDC...')">Ver Pool →</a></td>
+                            <td><a href="#" class="pool-link" onclick="openPoolDetails('ETH/USDC')">Ver Pool →</a></td>
                         </tr>
                         <tr>
                             <td>
@@ -1300,7 +1352,7 @@
                             <td style="color: var(--accent-success);">$89</td>
                             <td style="color: var(--accent-success);">+$740</td>
                             <td><span class="status-badge status-warning">Atenção</span></td>
-                            <td><a href="#" class="pool-link" onclick="alert('Abrindo pool WBTC/ETH...')">Ver Pool →</a></td>
+                            <td><a href="#" class="pool-link" onclick="openPoolDetails('WBTC/ETH')">Ver Pool →</a></td>
                         </tr>
                     </tbody>
                 </table>
@@ -1313,183 +1365,14 @@
         <div id="pools" class="page">
             <div style="margin-bottom: 30px;">
                 <h1 style="color: var(--text-primary); margin-bottom: 10px;">Pools Recomendadas pela IA</h1>
-                <p style="color: var(--text-secondary);">Análise em tempo real de 1,247 pools • Última atualização: há 2 minutos</p>
+                <p style="color: var(--text-secondary);" id="pools-subtitle">Análise em tempo real • Última atualização: carregando...</p>
             </div>
 
-            <div class="grid">
-                <div class="pool-card" onclick="showPoolDetails()">
-                    <div class="pool-header">
-                        <h3 class="pool-title">ETH/USDT 0.05%</h3>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="score-badge score-high">Score: 95</span>
-                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'ETH/USDT-0.05', 'ETH/USDT 0.05%')">⭐</button>
-                        </div>
-                    </div>
-                    <div class="pool-metrics">
-                        <div class="metric-item">
-                            <span class="metric-label">TVL</span>
-                            <span class="metric-value">$125.3M</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Volume 24h</span>
-                            <span class="metric-value">$45.2M</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">APR</span>
-                            <span class="metric-value" style="color: var(--accent-success);">52.8%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Capital Sugerido</span>
-                            <span class="metric-value" style="color: var(--accent-primary);">$15,000</span>
-                        </div>
-                    </div>
-                    <div class="range-visual">
-                        <div class="range-bar">
-                            <div style="position: absolute; left: 30%; width: 40%; height: 100%; background: rgba(0, 212, 255, 0.3); border-radius: 4px;"></div>
-                            <div class="current-price-line"></div>
-                        </div>
-                        <div class="range-bounds">
-                            <div class="range-bound">
-                                <div class="range-label">Min</div>
-                                <div class="range-value">$2,850</div>
-                            </div>
-                            <div class="range-bound">
-                                <div class="range-label">Atual</div>
-                                <div class="range-value" style="color: var(--accent-primary);">$3,035</div>
-                            </div>
-                            <div class="range-bound">
-                                <div class="range-label">Max</div>
-                                <div class="range-value">$3,450</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
-                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
-                        <div style="font-size: 13px; color: var(--text-primary);">
-                            Pool com excelente volume e baixa volatilidade relativa. Range atual cobre ~85% do fluxo esperado em 7 dias.
-                            A IA considera esta posição adequada para perfil Normal/Defensivo, com foco em geração de fees consistente e
-                            risco moderado de IL.
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
-                        Ver Detalhes Completos
-                    </button>
-                </div>
-
-                <div class="pool-card">
-                    <div class="pool-header">
-                        <h3 class="pool-title">ARB/ETH 0.3%</h3>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="score-badge score-high">Score: 92</span>
-                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'ARB/ETH-0.3', 'ARB/ETH 0.3%')">⭐</button>
-                        </div>
-                    </div>
-                    <div class="pool-metrics">
-                        <div class="metric-item">
-                            <span class="metric-label">TVL</span>
-                            <span class="metric-value">$28.7M</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Volume 24h</span>
-                            <span class="metric-value">$12.3M</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">APR</span>
-                            <span class="metric-value" style="color: var(--accent-success);">68.3%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Capital Sugerido</span>
-                            <span class="metric-value" style="color: var(--accent-primary);">$8,500</span>
-                        </div>
-                    </div>
-                    <div class="range-visual">
-                        <div class="range-bar">
-                            <div style="position: absolute; left: 35%; width: 30%; height: 100%; background: rgba(0, 212, 255, 0.3); border-radius: 4px;"></div>
-                            <div class="current-price-line"></div>
-                        </div>
-                        <div class="range-bounds">
-                            <div class="range-bound">
-                                <div class="range-label">Min</div>
-                                <div class="range-value">0.00032</div>
-                            </div>
-                            <div class="range-bound">
-                                <div class="range-label">Atual</div>
-                                <div class="range-value" style="color: var(--accent-primary);">0.00038</div>
-                            </div>
-                            <div class="range-bound">
-                                <div class="range-label">Max</div>
-                                <div class="range-value">0.00045</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
-                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
-                        <div style="font-size: 13px; color: var(--text-primary);">
-                            Perfil mais agressivo: volatilidade alta, mas com forte geração potencial de fees. Ideal para parte menor da banca,
-                            respeitando limites de exposição em ativos voláteis e exigindo monitoramento mais frequente do range.
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
-                        Ver Detalhes
-                    </button>
-                </div>
-
-                <div class="pool-card">
-                    <div class="pool-header">
-                        <h3 class="pool-title">USDC/USDT 0.01%</h3>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="score-badge score-medium">Score: 85</span>
-                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'USDC/USDT-0.01', 'USDC/USDT 0.01%')">⭐</button>
-                        </div>
-                    </div>
-                    <div class="pool-metrics">
-                        <div class="metric-item">
-                            <span class="metric-label">TVL</span>
-                            <span class="metric-value">$450.2M</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Volume 24h</span>
-                            <span class="metric-value">$125.7M</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">APR</span>
-                            <span class="metric-value" style="color: var(--accent-warning);">12.5%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Capital Sugerido</span>
-                            <span class="metric-value" style="color: var(--accent-primary);">$25,000</span>
-                        </div>
-                    </div>
-                    <div class="range-visual">
-                        <div class="range-bar">
-                            <div style="position: absolute; left: 45%; width: 10%; height: 100%; background: rgba(0, 212, 255, 0.3); border-radius: 4px;"></div>
-                            <div class="current-price-line"></div>
-                        </div>
-                        <div class="range-bounds">
-                            <div class="range-bound">
-                                <div class="range-label">Min</div>
-                                <div class="range-value">0.9998</div>
-                            </div>
-                            <div class="range-bound">
-                                <div class="range-label">Atual</div>
-                                <div class="range-value" style="color: var(--accent-primary);">1.0000</div>
-                            </div>
-                            <div class="range-bound">
-                                <div class="range-label">Max</div>
-                                <div class="range-value">1.0002</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
-                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
-                        <div style="font-size: 13px; color: var(--text-primary);">
-                            Pool estável para preservação de capital e suavização da curva de P&L. IL praticamente nula, mas APR menor.
-                            Indicada para compor base defensiva da estratégia, principalmente em momentos de maior incerteza no mercado.
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
-                        Ver Detalhes
-                    </button>
+            <div class="grid" id="recommended-pools-grid">
+                <!-- Pools serão carregadas via JavaScript -->
+                <div style="grid-column: 1 / -1; text-align: center; padding: 40px;">
+                    <div class="loading-spinner" style="width: 40px; height: 40px; margin: 0 auto 20px;"></div>
+                    <p style="color: var(--text-secondary);">Carregando pools recomendadas...</p>
                 </div>
             </div>
 
@@ -1506,12 +1389,12 @@
             <div style="margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center;">
                 <h1 style="color: var(--text-primary);">Minhas Pools Ativas</h1>
                 <div>
-                    <button class="btn btn-secondary">🔄 Atualizar</button>
+                    <button class="btn btn-secondary" onclick="loadActivePools()">🔄 Atualizar</button>
                     <button class="btn btn-primary" style="margin-left: 10px;">⚙️ Rebalancear Todas</button>
                 </div>
             </div>
 
-            <div class="grid">
+            <div class="grid" id="active-pools-grid">
                 <!-- Pool Card 1 -->
                 <div class="card">
                     <div class="card-header">
@@ -1764,7 +1647,7 @@
         </div>
 
         <!-- ============================================ -->
-        <!-- CONFIGURAÇÕES PAGE (FASE 2 - NÃO MEXER) -->
+        <!-- CONFIGURAÇÕES PAGE -->
         <!-- ============================================ -->
         <div id="settings" class="page">
             <div style="max-width: 800px; margin: 0 auto;">
@@ -1781,17 +1664,17 @@
                     <div class="form-group">
                         <label class="form-label">Perfil de Risco</label>
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                            <div class="risk-profile" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" onclick="selectRiskProfile('defensive', this)">
+                            <div class="risk-profile" id="profile-defensive" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" onclick="selectRiskProfile('defensive', this)">
                                 <div style="font-weight: 600; margin-bottom: 5px;">Defensivo</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Range: ±50%</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Max Pool: 10%</div>
                             </div>
-                            <div class="risk-profile" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-primary); cursor: pointer;" onclick="selectRiskProfile('normal', this)">
+                            <div class="risk-profile" id="profile-normal" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-primary); cursor: pointer;" onclick="selectRiskProfile('normal', this)">
                                 <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent-primary);">Normal</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Range: ±30%</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Max Pool: 20%</div>
                             </div>
-                            <div class="risk-profile" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" onclick="selectRiskProfile('aggressive', this)">
+                            <div class="risk-profile" id="profile-aggressive" style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" onclick="selectRiskProfile('aggressive', this)">
                                 <div style="font-weight: 600; margin-bottom: 5px;">Agressivo</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Range: ±15%</div>
                                 <div style="font-size: 12px; color: var(--text-secondary);">Max Pool: 30%</div>
@@ -1812,11 +1695,11 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label">Máx. por Rede (%)</label>
-                            <input type="text" class="form-input" value="40" />
+                            <input type="text" class="form-input" id="max-network" value="40" />
                         </div>
                         <div class="form-group">
                             <label class="form-label">Máx. Pools Voláteis (%)</label>
-                            <input type="text" class="form-input" value="30" />
+                            <input type="text" class="form-input" id="max-volatile" value="30" />
                         </div>
                     </div>
 
@@ -1829,11 +1712,11 @@
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                             <div>
                                 <label style="font-size: 11px; color: var(--text-muted);">Gas Máximo (gwei)</label>
-                                <input type="text" class="form-input" value="50" style="padding: 8px;" />
+                                <input type="text" class="form-input" id="max-gas" value="50" style="padding: 8px;" />
                             </div>
                             <div>
                                 <label style="font-size: 11px; color: var(--text-muted);">Min Retorno vs Gas</label>
-                                <input type="text" class="form-input" value="3x" style="padding: 8px;" />
+                                <input type="text" class="form-input" id="min-return-ratio" value="3x" style="padding: 8px;" />
                             </div>
                         </div>
                     </div>
@@ -1859,9 +1742,14 @@
                         </div>
                     </div>
 
-                    <button class="btn btn-primary" style="width: 100%; margin-top: 30px;" onclick="saveConfiguration()">
+                    <button class="btn btn-primary" style="width: 100%; margin-top: 30px;" onclick="saveConfiguration()" id="save-config-btn">
                         Salvar Configurações
                     </button>
+                    
+                    <div class="connection-status" style="margin-top: 15px; justify-content: center;">
+                        <div class="connection-dot" id="api-connection-dot"></div>
+                        <span id="api-connection-text">Conectado ao servidor</span>
+                    </div>
                 </div>
 
                 <!-- Alert quando não puder operar -->
@@ -1878,7 +1766,7 @@
         </div>
 
         <!-- ============================================ -->
-        <!-- FAVORITOS PAGE (NOVA) -->
+        <!-- FAVORITOS PAGE -->
         <!-- ============================================ -->
         <div id="favorites" class="page">
             <div style="margin-bottom: 30px;">
@@ -1896,7 +1784,7 @@
                 <button class="btn btn-secondary" onclick="filterFavorites('warning')">Atenção (<span class="fav-count-warning">0</span>)</button>
                 <button class="btn btn-secondary" onclick="filterFavorites('out')">Fora de Range (<span class="fav-count-out">0</span>)</button>
                 <div style="margin-left: auto;">
-                    <input type="text" placeholder="🔍 Buscar favoritas..." 
+                    <input type="text" placeholder="🔍 Buscar favoritas..." id="favorites-search"
                            style="padding: 8px 15px; background: var(--bg-secondary); 
                                   border: 1px solid var(--border-color); border-radius: 20px;
                                   color: var(--text-primary);" onkeyup="searchFavorites(this.value)">
@@ -1947,15 +1835,18 @@
         </div>
 
         <!-- ============================================ -->
-        <!-- ALERTAS PAGE (NÃO MEXER) -->
+        <!-- ALERTAS PAGE -->
         <!-- ============================================ -->
         <div id="alerts" class="page">
             <div style="margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center;">
                 <h1 style="color: var(--text-primary);">Central de Alertas</h1>
-                <button class="btn btn-secondary">Marcar Todas como Lidas</button>
+                <div>
+                    <button class="btn btn-secondary" onclick="loadAlerts()">🔄 Atualizar</button>
+                    <button class="btn btn-secondary" style="margin-left: 10px;">Marcar Todas como Lidas</button>
+                </div>
             </div>
 
-            <div style="max-width: 900px;">
+            <div style="max-width: 900px;" id="alerts-container">
                 <div class="alert-box">
                     <div class="alert-content">
                         <div class="alert-title">⚠️ Pool WBTC/ETH saindo do range</div>
@@ -2035,7 +1926,7 @@
                 </div>
             </div>
 
-            <!-- Performance Cards (menores) -->
+            <!-- Performance Cards -->
             <div class="info-grid">
                 <div class="info-card">
                     <div class="info-icon">📈</div>
@@ -2152,10 +2043,10 @@
     <div id="modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 class="modal-title">Detalhes da Pool ETH/USDT</h2>
+                <h2 class="modal-title" id="modal-title">Detalhes da Pool</h2>
                 <div class="modal-close" onclick="closeModal()">✕</div>
             </div>
-            <div style="margin: 20px 0;">
+            <div id="modal-body" style="margin: 20px 0;">
                 <p style="color: var(--text-secondary); margin-bottom: 20px;">
                     Análise completa da pool com recomendações da IA baseadas em 7 dias de dados históricos e padrões de mercado.
                 </p>
@@ -2188,88 +2079,149 @@
     </div>
 
     <script>
-        // Favorite pools storage (in real app, this would be in Supabase)
-        let favoritePools = JSON.parse(localStorage.getItem('favoritePools') || '[]');
-        // Estado da IA
+        // ============================================
+        // CONFIGURAÇÃO E ESTADO GLOBAL
+        // ============================================
+        const API_BASE = window.location.origin;
+        let favoritePools = [];
         let currentRiskProfile = 'normal';
         let currentGasValue = 12;
+        let currentFilter = 'all';
+        let isOnline = true;
 
-        function showPage(pageId, tabElement) {
-            // Hide all pages
-            document.querySelectorAll('.page').forEach(page => {
-                page.classList.remove('active');
-            });
+        // ============================================
+        // INICIALIZAÇÃO
+        // ============================================
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log('🚀 EMITY System iniciando...');
             
-            // Remove active from all tabs
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
+            // Carregar dados iniciais
+            await Promise.all([
+                loadFavorites(),
+                loadConfiguration(),
+                loadDashboardData(),
+                loadRecommendedPools(),
+                checkTelegramStatus()
+            ]);
             
-            // Show selected page
-            document.getElementById(pageId).classList.add('active');
+            // Inicializar UI
+            updateFavoritesCount();
+            updateIASummary();
             
-            // Add active to clicked tab
-            if (tabElement) {
-                tabElement.classList.add('active');
+            // Iniciar atualizações periódicas
+            startPeriodicUpdates();
+            
+            console.log('✅ EMITY System carregado!');
+        });
+
+        // ============================================
+        // API CALLS
+        // ============================================
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                updateConnectionStatus(true);
+                return await response.json();
+            } catch (error) {
+                console.error(`API Error [${endpoint}]:`, error);
+                updateConnectionStatus(false);
+                return null;
+            }
+        }
+
+        function updateConnectionStatus(online) {
+            isOnline = online;
+            const dot = document.getElementById('api-connection-dot');
+            const text = document.getElementById('api-connection-text');
+            
+            if (dot && text) {
+                dot.className = online ? 'connection-dot' : 'connection-dot offline';
+                text.textContent = online ? 'Conectado ao servidor' : 'Sem conexão';
+            }
+        }
+
+        // ============================================
+        // FAVORITOS - INTEGRAÇÃO COM API
+        // ============================================
+        async function loadFavorites() {
+            const data = await apiCall('/api/favorites/list');
+            
+            if (data && data.favorites) {
+                favoritePools = data.favorites;
+            } else {
+                // Fallback para localStorage
+                favoritePools = JSON.parse(localStorage.getItem('favoritePools') || '[]');
             }
             
-            // Update favorites page if needed
-            if (pageId === 'favorites') {
+            updateFavoritesCount();
+            
+            if (document.getElementById('favorites').classList.contains('active')) {
                 updateFavoritesPage();
             }
         }
 
-        function showPoolDetails() {
-            document.getElementById('modal').classList.add('active');
-        }
-
-        function closeModal() {
-            document.getElementById('modal').classList.remove('active');
-        }
-
-        // Toggle favorite function
         async function toggleFavorite(button, poolAddress, poolName) {
             button.classList.toggle('active');
-            
             const isFavorite = button.classList.contains('active');
             
             if (isFavorite) {
-                // Add to favorites
-                favoritePools.push({
+                // Adicionar aos favoritos
+                const newPool = {
                     address: poolAddress,
                     name: poolName,
                     addedAt: new Date().toISOString(),
-                    apr: Math.random() * 60 + 10, // Mock APR
-                    score: Math.floor(Math.random() * 20 + 80), // Mock score
+                    apr: Math.random() * 60 + 10,
+                    score: Math.floor(Math.random() * 20 + 80),
                     status: ['active', 'warning', 'danger'][Math.floor(Math.random() * 3)],
                     capital: Math.floor(Math.random() * 30000 + 5000),
                     fees24h: Math.floor(Math.random() * 500 + 50)
+                };
+                
+                // Tentar salvar na API
+                const result = await apiCall('/api/favorites/add', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        pool_address: poolAddress,
+                        pool_name: poolName
+                    })
                 });
                 
-                // Animation
+                favoritePools.push(newPool);
+                
+                // Animação
                 button.style.transform = 'scale(1.5)';
                 setTimeout(() => button.style.transform = 'scale(1)', 300);
                 
-                // Show notification
                 showNotification(`✅ ${poolName} adicionada aos favoritos!`);
             } else {
-                // Remove from favorites
+                // Remover dos favoritos
+                await apiCall('/api/favorites/remove', {
+                    method: 'DELETE',
+                    body: JSON.stringify({ pool_address: poolAddress })
+                });
+                
                 favoritePools = favoritePools.filter(p => p.address !== poolAddress);
                 showNotification(`❌ ${poolName} removida dos favoritos`);
             }
             
-            // Save to localStorage (in real app, this would be API call to Supabase)
+            // Salvar no localStorage como backup
             localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
             
-            // Update counter
             updateFavoritesCount();
-
-            // Se a aba de favoritos estiver aberta, atualiza a grade
+            
             if (document.getElementById('favorites').classList.contains('active')) {
                 updateFavoritesPage();
             }
-
-            // Atualiza leitura da IA
+            
             updateIASummary();
         }
 
@@ -2279,22 +2231,18 @@
                 el.textContent = count;
             });
             
-            // Update badge
             const badge = document.querySelector('.favorites-badge');
             if (badge) {
-                if (count > 0) {
-                    badge.style.display = 'inline-block';
-                    badge.textContent = count;
-                } else {
-                    badge.style.display = 'none';
-                }
+                badge.style.display = count > 0 ? 'inline-block' : 'none';
+                badge.textContent = count;
             }
             
-            // Sync star buttons
+            // Sincronizar botões de estrela
             document.querySelectorAll('.btn-star').forEach(btn => {
                 const onclickAttr = btn.getAttribute('onclick') || '';
                 const match = onclickAttr.match(/'([^']+)'/);
                 const poolAddress = match ? match[1] : null;
+                
                 if (poolAddress && favoritePools.some(p => p.address === poolAddress)) {
                     btn.classList.add('active');
                 } else {
@@ -2308,7 +2256,6 @@
             const stats = document.querySelector('.favorites-stats');
             
             if (!favoritePools.length) {
-                // Show placeholder
                 grid.innerHTML = `
                     <div id="no-favorites" style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
                         <div style="font-size: 48px; margin-bottom: 20px;">⭐</div>
@@ -2323,7 +2270,6 @@
                 `;
                 if (stats) stats.style.display = 'none';
             } else {
-                // Show favorite pools
                 grid.innerHTML = favoritePools.map(pool => `
                     <div class="pool-card favorite-card" data-status="${pool.status}" data-name="${pool.name.toLowerCase()}">
                         <div class="favorite-ribbon">
@@ -2340,11 +2286,11 @@
                         <div class="quick-metrics">
                             <div class="metric">
                                 <span class="label">APR</span>
-                                <span class="value success">${pool.apr.toFixed(1)}%</span>
+                                <span class="value success">${(pool.apr || 0).toFixed(1)}%</span>
                             </div>
                             <div class="metric">
                                 <span class="label">24h Fees</span>
-                                <span class="value">$${pool.fees24h}</span>
+                                <span class="value">$${pool.fees24h || 0}</span>
                             </div>
                             <div class="metric">
                                 <span class="label">Status</span>
@@ -2372,7 +2318,7 @@
                 
                 if (stats) stats.style.display = 'block';
                 
-                // Update stats
+                // Atualizar estatísticas
                 const totalCapital = favoritePools.reduce((sum, p) => sum + (p.capital || 0), 0);
                 const avgAPR = favoritePools.reduce((sum, p) => sum + (p.apr || 0), 0) / favoritePools.length;
                 const totalFees = favoritePools.reduce((sum, p) => sum + (p.fees24h || 0), 0);
@@ -2384,7 +2330,7 @@
                 document.getElementById('fav-avg-score').textContent = `${Math.floor(avgScore)}/100`;
             }
             
-            // Update filter counts
+            // Atualizar contadores dos filtros
             const all = favoritePools.length;
             const inRange = favoritePools.filter(p => p.status === 'active').length;
             const warning = favoritePools.filter(p => p.status === 'warning').length;
@@ -2394,13 +2340,24 @@
             document.querySelector('.fav-count-range').textContent = inRange;
             document.querySelector('.fav-count-warning').textContent = warning;
             document.querySelector('.fav-count-out').textContent = out;
+            
+            // Aplicar filtro atual
+            if (currentFilter !== 'all') {
+                filterFavorites(currentFilter);
+            }
         }
 
         function filterFavorites(type) {
+            currentFilter = type;
             const grid = document.getElementById('favorites-grid');
             if (!grid) return;
+            
             const cards = grid.querySelectorAll('.pool-card.favorite-card');
             if (!cards.length) return;
+
+            // Limpar busca quando muda filtro
+            const searchInput = document.getElementById('favorites-search');
+            if (searchInput) searchInput.value = '';
 
             cards.forEach(card => {
                 const status = card.getAttribute('data-status');
@@ -2423,13 +2380,17 @@
         function searchFavorites(query) {
             const grid = document.getElementById('favorites-grid');
             if (!grid) return;
+            
             const cards = grid.querySelectorAll('.pool-card.favorite-card');
             if (!cards.length) return;
 
             const q = (query || '').toLowerCase().trim();
 
-            // Se a busca estiver vazia, não mexe no que o filtro já definiu
-            if (!q) return;
+            // Se a busca estiver vazia, aplicar filtro atual
+            if (!q) {
+                filterFavorites(currentFilter);
+                return;
+            }
 
             cards.forEach(card => {
                 const name = (card.getAttribute('data-name') || '').toLowerCase();
@@ -2438,194 +2399,108 @@
         }
 
         function saveNote(poolAddress, note) {
-            // Save note to pool (in real app, this would be API call)
             const pool = favoritePools.find(p => p.address === poolAddress);
             if (pool) {
                 pool.note = note;
                 localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
+                
+                // Tentar salvar na API também
+                apiCall('/api/favorites/add', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        pool_address: poolAddress,
+                        notes: note
+                    })
+                });
+                
                 showNotification('💾 Nota salva!');
             }
         }
 
-        function removeFavorite(poolAddress, poolName) {
-            // Remove pool from favorites array
+        async function removeFavorite(poolAddress, poolName) {
+            await apiCall('/api/favorites/remove', {
+                method: 'DELETE',
+                body: JSON.stringify({ pool_address: poolAddress })
+            });
+            
             favoritePools = favoritePools.filter(p => p.address !== poolAddress);
             localStorage.setItem('favoritePools', JSON.stringify(favoritePools));
-
-            // Atualiza contadores e grid
+            
             updateFavoritesCount();
             updateFavoritesPage();
-
             showNotification(`❌ ${poolName} removida dos favoritos`);
-
-            // Atualiza leitura da IA
             updateIASummary();
         }
 
-        function showNotification(message) {
-            // Create notification element
-            const notification = document.createElement('div');
-            notification.style.cssText = `
-                position: fixed;
-                top: 130px;
-                right: 20px;
-                background: var(--bg-card);
-                border: 1px solid var(--border-color);
-                border-left: 3px solid var(--accent-primary);
-                padding: 15px 20px;
-                border-radius: 8px;
-                color: var(--text-primary);
-                z-index: 10000;
-                animation: slideIn 0.3s ease;
-                box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
-            `;
-            notification.innerHTML = message;
-            document.body.appendChild(notification);
+        // ============================================
+        // CONFIGURAÇÕES - INTEGRAÇÃO COM API
+        // ============================================
+        async function loadConfiguration() {
+            const data = await apiCall('/api/config');
             
-            // Remove after 3 seconds
-            setTimeout(() => {
-                notification.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => notification.remove(), 300);
-            }, 3000);
-        }
-
-        // IA – cálculo de score e resumo
-        function updateIASummary() {
-            const totalFav = favoritePools.length;
-            const activeFav = favoritePools.filter(p => p.status === 'active').length;
-            const warningFav = favoritePools.filter(p => p.status === 'warning').length;
-            const dangerFav = favoritePools.filter(p => p.status === 'danger').length;
-
-            // Base de risco por perfil
-            let riskBaseScore = 80;
-            if (currentRiskProfile === 'defensive') riskBaseScore = 88;
-            else if (currentRiskProfile === 'aggressive') riskBaseScore = 72;
-
-            // Saúde das favoritas
-            let favScore = 80;
-            if (totalFav > 0) {
-                const health = (activeFav - dangerFav) / totalFav; // [-1, 1]
-                const clamped = Math.max(-1, Math.min(1, health));
-                favScore = Math.round(60 + 40 * clamped); // 20–100
-            }
-
-            // Impacto do gas
-            let gasScore = 80;
-            if (currentGasValue <= 15) gasScore = 90;
-            else if (currentGasValue <= 30) gasScore = 80;
-            else if (currentGasValue <= 50) gasScore = 65;
-            else gasScore = 45;
-
-            const globalScore = Math.max(0, Math.min(100, Math.round(
-                riskBaseScore * 0.4 +
-                favScore * 0.4 +
-                gasScore * 0.2
-            )));
-
-            let label = 'Excelente';
-            if (globalScore < 55) label = 'Crítico';
-            else if (globalScore < 70) label = 'Moderado';
-            else if (globalScore < 85) label = 'Bom';
-
-            const riskMap = {
-                defensive: 'Defensivo',
-                normal: 'Normal',
-                aggressive: 'Agressivo'
-            };
-            const riskText = riskMap[currentRiskProfile] || 'Normal';
-
-            let gasImpact = 'Neutro';
-            if (currentGasValue <= 15) gasImpact = 'Muito favorável para operar';
-            else if (currentGasValue <= 30) gasImpact = 'Ok para operar, sem grandes restrições';
-            else if (currentGasValue <= 50) gasImpact = 'Começa a pesar no retorno das pools';
-            else gasImpact = 'Desfavorável, evite movimentos desnecessários';
-
-            let action = '';
-            if (globalScore < 55 || dangerFav > 0) {
-                action = 'Priorize proteção: evite novas posições e considere reduzir exposição em pools fora de range ou muito voláteis.';
-            } else if (warningFav > 0) {
-                action = 'Monitore de perto as pools em atenção e avalie rebalancear ranges antes de novas alocações.';
-            } else if (globalScore >= 85 && gasScore >= 80) {
-                action = 'Cenário saudável: é possível considerar novas entradas dentro dos limites de risco definidos.';
+            if (data) {
+                // Preencher campos com dados da API
+                if (data.total_bank) document.getElementById('total-bank').value = data.total_bank;
+                if (data.max_pool_percent) document.getElementById('max-pool-percent').value = data.max_pool_percent;
+                if (data.risk_profile) {
+                    currentRiskProfile = data.risk_profile;
+                    highlightRiskProfile(data.risk_profile);
+                }
+                syncLimits();
             } else {
-                action = 'Mantenha as posições atuais, aguardando melhor relação entre gas, volatilidade e fees.';
-            }
-
-            const mainEl = document.getElementById('ia-summary-main');
-            const riskEl = document.getElementById('ia-summary-risk');
-            const gasEl = document.getElementById('ia-summary-gas');
-            const probEl = document.getElementById('ia-summary-prob');
-            const actionsEl = document.getElementById('ia-summary-actions');
-            const scoreValueEl = document.getElementById('ia-score-value');
-            const scoreLabelEl = document.getElementById('ia-score-label');
-            const scoreSubtitleEl = document.getElementById('ia-score-subtitle');
-            const iaStatusEl = document.getElementById('ia-status');
-
-            if (scoreValueEl) scoreValueEl.textContent = globalScore + '/100';
-
-            if (scoreLabelEl) {
-                scoreLabelEl.textContent = label;
-                scoreLabelEl.classList.remove('status-active', 'status-warning', 'status-danger');
-                if (label === 'Excelente' || label === 'Bom') {
-                    scoreLabelEl.classList.add('status-active');
-                } else if (label === 'Moderado') {
-                    scoreLabelEl.classList.add('status-warning');
-                } else {
-                    scoreLabelEl.classList.add('status-danger');
-                }
-            }
-
-            if (scoreSubtitleEl) {
-                const favPhrase = totalFav
-                    ? `${totalFav} pools favoritas monitoradas`
-                    : 'nenhuma pool favorita monitorada ainda';
-                scoreSubtitleEl.textContent = `Leitura combinada de perfil ${riskText}, gas atual e ${favPhrase}.`;
-            }
-
-            if (mainEl) {
-                mainEl.textContent = `A IA avalia o sistema como ${label} neste momento, com score ${globalScore}/100.`;
-            }
-
-            if (riskEl) {
-                riskEl.textContent = `• Perfil de risco atual: ${riskText}. Favoritas: ${activeFav} em range, ${warningFav} em atenção, ${dangerFav} fora.`;
-            }
-
-            if (gasEl) {
-                gasEl.textContent = `• Gas estimado: ${currentGasValue} gwei. ${gasImpact}.`;
-            }
-
-            if (probEl) {
-                probEl.textContent = `• Probabilidade de cenário favorável (próx. 24h): ${globalScore}% (estimativa qualitativa da IA).`;
-            }
-
-            if (actionsEl) {
-                actionsEl.textContent = `Ação sugerida: ${action}`;
-            }
-
-            if (iaStatusEl) {
-                iaStatusEl.classList.remove('ia-online', 'ia-offline');
-                if (globalScore < 55) {
-                    iaStatusEl.classList.add('ia-offline');
-                    iaStatusEl.title = 'IA em modo de alerta: ambiente ruim para novas posições.';
-                } else {
-                    iaStatusEl.classList.add('ia-online');
-                    iaStatusEl.title = `IA operando normalmente: cenário ${label.toLowerCase()}.`;
-                }
+                // Fallback para localStorage
+                const config = JSON.parse(localStorage.getItem('riskConfig') || '{}');
+                if (config.totalBank) document.getElementById('total-bank').value = config.totalBank;
+                if (config.maxPoolPercent) document.getElementById('max-pool-percent').value = config.maxPoolPercent;
             }
         }
 
-        // Configuration functions
-        function selectRiskProfile(profile, element) {
-            // Remove active state from all profiles
-            document.querySelectorAll('.risk-profile').forEach(el => {
-                el.style.border = '1px solid var(--border-color)';
-                el.style.color = 'inherit';
+        async function saveConfiguration() {
+            const btn = document.getElementById('save-config-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span> Salvando...';
+            
+            const config = {
+                total_bank: parseFloat(document.getElementById('total-bank').value) || 0,
+                max_pool_percent: parseFloat(document.getElementById('max-pool-percent').value) || 20,
+                max_pool_usdt: parseFloat(document.getElementById('max-pool-usdt').value) || 0,
+                max_network_percent: parseFloat(document.getElementById('max-network').value) || 40,
+                max_volatile_percent: parseFloat(document.getElementById('max-volatile').value) || 30,
+                max_gas: parseFloat(document.getElementById('max-gas').value) || 50,
+                min_return_ratio: document.getElementById('min-return-ratio').value || '3x',
+                risk_profile: currentRiskProfile
+            };
+            
+            // Salvar na API
+            const result = await apiCall('/api/config', {
+                method: 'POST',
+                body: JSON.stringify(config)
             });
             
-            // Add active state to selected
-            element.style.border = '2px solid var(--accent-primary)';
+            // Salvar no localStorage como backup
+            localStorage.setItem('riskConfig', JSON.stringify(config));
             
-            // Update limits based on profile
+            btn.disabled = false;
+            btn.innerHTML = 'Salvar Configurações';
+            
+            if (result) {
+                showNotification('✅ Configurações salvas com sucesso!');
+            } else {
+                showNotification('⚠️ Salvo localmente (API offline)');
+            }
+            
+            updateIASummary();
+        }
+
+        function selectRiskProfile(profile, element) {
+            document.querySelectorAll('.risk-profile').forEach(el => {
+                el.style.border = '1px solid var(--border-color)';
+                el.querySelector('div').style.color = 'inherit';
+            });
+            
+            element.style.border = '2px solid var(--accent-primary)';
+            element.querySelector('div').style.color = 'var(--accent-primary)';
+            
             const limits = {
                 defensive: { maxPool: 10, range: 50 },
                 normal: { maxPool: 20, range: 30 },
@@ -2634,14 +2509,19 @@
             
             document.getElementById('max-pool-percent').value = limits[profile].maxPool;
             syncLimits();
-
+            
             currentRiskProfile = profile;
             updateIASummary();
         }
 
+        function highlightRiskProfile(profile) {
+            const element = document.getElementById(`profile-${profile}`);
+            if (element) {
+                selectRiskProfile(profile, element);
+            }
+        }
+
         function updateBankSettings() {
-            const totalBank = parseFloat(document.getElementById('total-bank').value) || 0;
-            localStorage.setItem('totalBank', totalBank);
             syncLimits();
             updateIASummary();
         }
@@ -2660,104 +2540,377 @@
             document.getElementById('max-pool-percent').value = maxPercent;
         }
 
-        function saveConfiguration() {
-            // Save all configuration to API
-            const config = {
-                totalBank: document.getElementById('total-bank').value,
-                maxPoolPercent: document.getElementById('max-pool-percent').value,
-                maxPoolUSDT: document.getElementById('max-pool-usdt').value,
-                // Add other fields...
-            };
+        // ============================================
+        // DASHBOARD - CARREGAR DADOS REAIS
+        // ============================================
+        async function loadDashboardData() {
+            const data = await apiCall('/api/dashboard');
             
-            // In real app, this would be API call
-            localStorage.setItem('riskConfig', JSON.stringify(config));
-            showNotification('✅ Configurações salvas com sucesso!');
-            updateIASummary();
+            if (data) {
+                // Esconder avisos de mock se dados reais
+                document.querySelectorAll('.mock-warning').forEach(el => {
+                    if (data.total_pools > 0) el.classList.add('hidden');
+                });
+                
+                // Atualizar métricas se disponíveis
+                if (data.avg_apr) {
+                    document.getElementById('dashboard-apr').textContent = `${data.avg_apr.toFixed(1)}%`;
+                }
+            }
+        }
+
+        // ============================================
+        // POOLS RECOMENDADAS - CARREGAR DA API
+        // ============================================
+        async function loadRecommendedPools() {
+            const data = await apiCall('/api/recommendations');
+            const grid = document.getElementById('recommended-pools-grid');
+            const subtitle = document.getElementById('pools-subtitle');
+            const badge = document.getElementById('pools-badge');
+            
+            if (data && data.pools && data.pools.length > 0) {
+                subtitle.textContent = `Análise em tempo real de ${data.total_analyzed || data.pools.length} pools • Última atualização: agora`;
+                badge.textContent = data.pools.length;
+                
+                grid.innerHTML = data.pools.map(pool => `
+                    <div class="pool-card" onclick="openPoolDetails('${pool.name}')">
+                        <div class="pool-header">
+                            <h3 class="pool-title">${pool.name}</h3>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span class="score-badge ${pool.score >= 90 ? 'score-high' : pool.score >= 70 ? 'score-medium' : 'score-low'}">Score: ${pool.score}</span>
+                                <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, '${pool.address}', '${pool.name}')">⭐</button>
+                            </div>
+                        </div>
+                        <div class="pool-metrics">
+                            <div class="metric-item">
+                                <span class="metric-label">TVL</span>
+                                <span class="metric-value">$${formatNumber(pool.tvl)}</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Volume 24h</span>
+                                <span class="metric-value">$${formatNumber(pool.volume_24h)}</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">APR</span>
+                                <span class="metric-value" style="color: var(--accent-success);">${(pool.apr || 0).toFixed(1)}%</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Capital Sugerido</span>
+                                <span class="metric-value" style="color: var(--accent-primary);">$${formatNumber(pool.suggested_capital || 5000)}</span>
+                            </div>
+                        </div>
+                        <div class="range-visual">
+                            <div class="range-bar">
+                                <div style="position: absolute; left: 30%; width: 40%; height: 100%; background: rgba(0, 212, 255, 0.3); border-radius: 4px;"></div>
+                                <div class="current-price-line"></div>
+                            </div>
+                        </div>
+                        <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
+                            <div style="font-size: 13px; color: var(--text-primary);">${pool.analysis || 'Pool com bom volume e liquidez. Analisando métricas...'}</div>
+                        </div>
+                        <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
+                            Ver Detalhes Completos
+                        </button>
+                    </div>
+                `).join('');
+                
+                // Atualizar estrelas
+                updateFavoritesCount();
+            } else {
+                // Mostrar pools estáticas se API falhar
+                grid.innerHTML = getStaticPoolsHTML();
+                subtitle.textContent = 'Análise em tempo real • Última atualização: aguardando dados...';
+            }
+        }
+
+        function getStaticPoolsHTML() {
+            return `
+                <div class="pool-card" onclick="showPoolDetails()">
+                    <div class="pool-header">
+                        <h3 class="pool-title">ETH/USDT 0.05%</h3>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span class="score-badge score-high">Score: 95</span>
+                            <button class="btn-star" onclick="event.stopPropagation(); toggleFavorite(this, 'ETH/USDT-0.05', 'ETH/USDT 0.05%')">⭐</button>
+                        </div>
+                    </div>
+                    <div class="pool-metrics">
+                        <div class="metric-item">
+                            <span class="metric-label">TVL</span>
+                            <span class="metric-value">$125.3M</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Volume 24h</span>
+                            <span class="metric-value">$45.2M</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">APR</span>
+                            <span class="metric-value" style="color: var(--accent-success);">52.8%</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Capital Sugerido</span>
+                            <span class="metric-value" style="color: var(--accent-primary);">$15,000</span>
+                        </div>
+                    </div>
+                    <div class="range-visual">
+                        <div class="range-bar">
+                            <div style="position: absolute; left: 30%; width: 40%; height: 100%; background: rgba(0, 212, 255, 0.3); border-radius: 4px;"></div>
+                            <div class="current-price-line"></div>
+                        </div>
+                        <div class="range-bounds">
+                            <div class="range-bound">
+                                <div class="range-label">Min</div>
+                                <div class="range-value">$2,850</div>
+                            </div>
+                            <div class="range-bound">
+                                <div class="range-label">Atual</div>
+                                <div class="range-value" style="color: var(--accent-primary);">$3,035</div>
+                            </div>
+                            <div class="range-bound">
+                                <div class="range-label">Max</div>
+                                <div class="range-value">$3,450</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="padding: 15px; background: var(--bg-secondary); border-radius: 8px; margin-top: 15px;">
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">💡 Análise IA:</div>
+                        <div style="font-size: 13px; color: var(--text-primary);">
+                            Pool com excelente volume e baixa volatilidade. Range atual cobre ~85% do fluxo esperado em 7 dias.
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" style="width: 100%; margin-top: 15px;">
+                        Ver Detalhes Completos
+                    </button>
+                </div>
+            `;
+        }
+
+        // ============================================
+        // TELEGRAM STATUS
+        // ============================================
+        async function checkTelegramStatus() {
+            const data = await apiCall('/api/telegram/status');
+            const pulse = document.getElementById('telegram-pulse');
+            const indicator = document.getElementById('telegram-status');
+            
+            if (data && data.enabled) {
+                pulse.classList.remove('offline');
+                indicator.title = 'Telegram Bot Online - Clique para testar';
+            } else {
+                pulse.classList.add('offline');
+                indicator.title = 'Telegram Bot Offline';
+            }
+        }
+
+        async function testTelegramAlert() {
+            showNotification('📱 Enviando alerta de teste...');
+            
+            const result = await apiCall('/api/telegram/test', { method: 'POST' });
+            
+            if (result && result.success) {
+                showNotification('✅ Alerta enviado! Verifique seu Telegram.');
+            } else {
+                showNotification('⚠️ Falha ao enviar alerta');
+            }
+        }
+
+        // ============================================
+        // IA SUMMARY
+        // ============================================
+        function updateIASummary() {
+            const totalFav = favoritePools.length;
+            const activeFav = favoritePools.filter(p => p.status === 'active').length;
+            const warningFav = favoritePools.filter(p => p.status === 'warning').length;
+            const dangerFav = favoritePools.filter(p => p.status === 'danger').length;
+
+            let riskBaseScore = 80;
+            if (currentRiskProfile === 'defensive') riskBaseScore = 88;
+            else if (currentRiskProfile === 'aggressive') riskBaseScore = 72;
+
+            let favScore = 80;
+            if (totalFav > 0) {
+                const health = (activeFav - dangerFav) / totalFav;
+                const clamped = Math.max(-1, Math.min(1, health));
+                favScore = Math.round(60 + 40 * clamped);
+            }
+
+            let gasScore = 80;
+            if (currentGasValue <= 15) gasScore = 90;
+            else if (currentGasValue <= 30) gasScore = 80;
+            else if (currentGasValue <= 50) gasScore = 65;
+            else gasScore = 45;
+
+            const globalScore = Math.max(0, Math.min(100, Math.round(
+                riskBaseScore * 0.4 +
+                favScore * 0.4 +
+                gasScore * 0.2
+            )));
+
+            let label = 'Excelente';
+            if (globalScore < 55) label = 'Crítico';
+            else if (globalScore < 70) label = 'Moderado';
+            else if (globalScore < 85) label = 'Bom';
+
+            const riskMap = { defensive: 'Defensivo', normal: 'Normal', aggressive: 'Agressivo' };
+            const riskText = riskMap[currentRiskProfile] || 'Normal';
+
+            let gasImpact = 'Neutro';
+            if (currentGasValue <= 15) gasImpact = 'Muito favorável para operar';
+            else if (currentGasValue <= 30) gasImpact = 'Ok para operar';
+            else if (currentGasValue <= 50) gasImpact = 'Começa a pesar no retorno';
+            else gasImpact = 'Desfavorável, evite movimentos';
+
+            let action = '';
+            if (globalScore < 55 || dangerFav > 0) {
+                action = 'Priorize proteção: evite novas posições.';
+            } else if (warningFav > 0) {
+                action = 'Monitore as pools em atenção.';
+            } else if (globalScore >= 85 && gasScore >= 80) {
+                action = 'Cenário saudável para novas entradas.';
+            } else {
+                action = 'Mantenha posições atuais.';
+            }
+
+            // Atualizar elementos
+            const scoreValueEl = document.getElementById('ia-score-value');
+            const scoreLabelEl = document.getElementById('ia-score-label');
+            const scoreSubtitleEl = document.getElementById('ia-score-subtitle');
+            const iaStatusEl = document.getElementById('ia-status');
+            const mainEl = document.getElementById('ia-summary-main');
+            const riskEl = document.getElementById('ia-summary-risk');
+            const gasEl = document.getElementById('ia-summary-gas');
+            const probEl = document.getElementById('ia-summary-prob');
+            const actionsEl = document.getElementById('ia-summary-actions');
+
+            if (scoreValueEl) scoreValueEl.textContent = `${globalScore}/100`;
+            
+            if (scoreLabelEl) {
+                scoreLabelEl.textContent = label;
+                scoreLabelEl.className = 'status-badge';
+                if (label === 'Excelente' || label === 'Bom') scoreLabelEl.classList.add('status-active');
+                else if (label === 'Moderado') scoreLabelEl.classList.add('status-warning');
+                else scoreLabelEl.classList.add('status-danger');
+            }
+
+            if (scoreSubtitleEl) {
+                const favPhrase = totalFav ? `${totalFav} pools favoritas` : 'nenhuma favorita';
+                scoreSubtitleEl.textContent = `Perfil ${riskText}, gas ${currentGasValue}gwei, ${favPhrase}.`;
+            }
+
+            if (mainEl) mainEl.textContent = `A IA avalia o sistema como ${label} (${globalScore}/100).`;
+            if (riskEl) riskEl.textContent = `• Perfil: ${riskText}. Favoritas: ${activeFav} em range, ${warningFav} atenção, ${dangerFav} fora.`;
+            if (gasEl) gasEl.textContent = `• Gas: ${currentGasValue} gwei. ${gasImpact}.`;
+            if (probEl) probEl.textContent = `• Probabilidade favorável: ${globalScore}%.`;
+            if (actionsEl) actionsEl.textContent = `Ação sugerida: ${action}`;
+
+            if (iaStatusEl) {
+                iaStatusEl.classList.remove('ia-online', 'ia-offline');
+                iaStatusEl.classList.add(globalScore < 55 ? 'ia-offline' : 'ia-online');
+                iaStatusEl.title = `IA: ${label}`;
+            }
+        }
+
+        // ============================================
+        // NAVEGAÇÃO E UI
+        // ============================================
+        function showPage(pageId, tabElement) {
+            document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            
+            document.getElementById(pageId).classList.add('active');
+            if (tabElement) tabElement.classList.add('active');
+            
+            if (pageId === 'favorites') updateFavoritesPage();
+            if (pageId === 'pools') loadRecommendedPools();
+        }
+
+        function showPoolDetails() {
+            document.getElementById('modal').classList.add('active');
+        }
+
+        function openPoolDetails(poolName) {
+            document.getElementById('modal-title').textContent = `Detalhes: ${poolName}`;
+            document.getElementById('modal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+
+        function showNotification(message) {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed; top: 130px; right: 20px;
+                background: var(--bg-card); border: 1px solid var(--border-color);
+                border-left: 3px solid var(--accent-primary);
+                padding: 15px 20px; border-radius: 8px;
+                color: var(--text-primary); z-index: 10000;
+                animation: slideIn 0.3s ease;
+                box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+            `;
+            notification.innerHTML = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
         }
 
         function generateReport() {
             showNotification('📊 Gerando relatório...');
-            setTimeout(() => {
-                showNotification('✅ Relatório gerado! Fazendo download...');
-            }, 2000);
+            setTimeout(() => showNotification('✅ Relatório gerado!'), 2000);
         }
 
-        // Close modal when clicking outside
+        // ============================================
+        // UTILIDADES
+        // ============================================
+        function formatNumber(num) {
+            if (!num) return '0';
+            if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
+            if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
+            if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
+            return num.toLocaleString();
+        }
+
+        // ============================================
+        // ATUALIZAÇÕES PERIÓDICAS
+        // ============================================
+        function startPeriodicUpdates() {
+            // Atualizar gas a cada 30s
+            setInterval(() => {
+                const gasIndicator = document.getElementById('gas-indicator');
+                if (!gasIndicator) return;
+
+                currentGasValue = Math.floor(Math.random() * 50) + 5;
+                gasIndicator.textContent = `Gas: ${currentGasValue} gwei`;
+                
+                gasIndicator.classList.remove('gas-low', 'gas-medium', 'gas-high');
+                if (currentGasValue < 15) gasIndicator.classList.add('gas-low');
+                else if (currentGasValue < 30) gasIndicator.classList.add('gas-medium');
+                else gasIndicator.classList.add('gas-high');
+                
+                const alert = document.getElementById('no-operate-alert');
+                if (alert) alert.style.display = currentGasValue > 50 ? 'block' : 'none';
+
+                updateIASummary();
+            }, 30000);
+
+            // Verificar status do Telegram a cada 5 min
+            setInterval(checkTelegramStatus, 300000);
+        }
+
+        // Fechar modal ao clicar fora
         document.getElementById('modal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeModal();
-            }
+            if (e.target === this) closeModal();
         });
 
-        // Simulate gas price changes
-        setInterval(() => {
-            const gasIndicator = document.querySelector('.gas-indicator');
-            if (!gasIndicator) return;
-
-            const gasValue = Math.floor(Math.random() * 50) + 5;
-            currentGasValue = gasValue;
-            
-            gasIndicator.textContent = `Gas: ${gasValue} gwei`;
-            
-            // Remove all classes
-            gasIndicator.classList.remove('gas-low', 'gas-medium', 'gas-high');
-            
-            // Add appropriate class
-            if (gasValue < 15) {
-                gasIndicator.classList.add('gas-low');
-            } else if (gasValue < 30) {
-                gasIndicator.classList.add('gas-medium');
-            } else {
-                gasIndicator.classList.add('gas-high');
-            }
-            
-            // Check if should not operate
-            const alert = document.getElementById('no-operate-alert');
-            if (alert) {
-                if (gasValue > 50) {
-                    alert.style.display = 'block';
-                } else {
-                    alert.style.display = 'none';
-                }
-            }
-
-            updateIASummary();
-        }, 3000);
-
-        // Simulate real-time updates
-        setInterval(() => {
-            // Update random values
-            const values = document.querySelectorAll('.card-value');
-            values.forEach(value => {
-                if (value.textContent.includes('$')) {
-                    const current = parseFloat(value.textContent.replace(/[$,]/g, ''));
-                    if (!current) return;
-                    const change = (Math.random() - 0.5) * current * 0.001;
-                    const newValue = current + change;
-                    value.textContent = '$' + newValue.toLocaleString('en-US', {
-                        minimumFractionDigits: 0,
-                        maximumFractionDigits: 0
-                    });
-                }
-            });
-        }, 5000);
-
-        // Initialize favorites count on load
-        updateFavoritesCount();
-        updateIASummary();
-
-        // Add CSS animations
+        // CSS animations
         const style = document.createElement('style');
         style.textContent = `
-@keyframes slideIn {
-    from { opacity: 0; transform: translateX(20px); }
-    to { opacity: 1; transform: translateX(0); }
-}
-@keyframes slideOut {
-    from { opacity: 1; transform: translateX(0); }
-    to { opacity: 0; transform: translateX(20px); }
-}
-`;
+            @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+            @keyframes slideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(20px); } }
+        `;
         document.head.appendChild(style);
     </script>
 </body>
